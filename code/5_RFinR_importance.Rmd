@@ -1,0 +1,1604 @@
+---
+title: "RF"
+author: "Luwen Wan"
+date: "2024-03-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This is for making a proxy model using the data from GEE as GEE does't provide variable importance function. 
+Initial model was not saved, but the final model was saved, so load the mydata.RData (phi_df, shapley_MDA_Gini, impt_frame, model, rf_model) before running any chunk here 
+Generating figures 7, 8 ,9 ,3A, 5A, 6A, 7A
+
+# 1. working environment and load packages 
+```{r setup, include=FALSE}
+# tutorial 4 --------------------------------------------------------------
+# https://rpubs.com/archita25/677243
+# https://blog.csdn.net/weixin_41988838/article/details/97887938?utm_medium=distribute.pc_relevant_download.none-task-blog-BlogCommendFromBaidu-13.nonecase&depth_1-utm_source=distribute.pc_relevant_download.none-task-blog-BlogCommendFromBaidu-13.nonecas 
+# https://blog.csdn.net/yawei_liu1688/article/details/78891050?utm_medium=distribute.pc_relevant_download.none-task-blog-baidujs-2.nonecase&depth_1-utm_source=distribute.pc_relevant_download.none-task-blog-baidujs-2.nonecase
+# https://www.r-bloggers.com/2018/01/how-to-implement-random-forests-in-r/
+
+# Be Aware of Bias in RF Variable Importance Metrics
+# https://www.r-bloggers.com/2018/06/be-aware-of-bias-in-rf-variable-importance-metrics/
+
+remove(list = ls())
+library(readr)
+#library(xlsx) # import data 
+library(randomForest)
+library(varSelRF) # for filtering variable 
+library(pROC) # for 
+library(caret) # for confusion matrix 
+library(sp)
+# library(rgdal)
+library(dplyr)
+library(forcats)  # to use fct_reorder
+library(stringr)
+library(ggplot2)
+library(tidyr)  # for gather function 
+library(tibble)  
+library(ggpubr)
+library(ggpmisc)
+library(ggrepel)
+library(grid)
+library(tidyverse)
+library(skimr)
+library(knitr)
+library(showtext)
+library(foreign) # for read.dbf 
+library(pdp)
+library(sf)
+library(colorspace)
+# library(AnnotationDbi)
+# devtools::install_github("zmjones/edarf", subdir = "pkg")
+# library(edarf)
+# font_add_google(name = "Amatic SC", family = "amatic-sc")
+# font_add_google(name = "Poppins", family = "Poppins")
+library(ROCR)
+library(xgboost) 
+library(shapr)
+library(iml) # for mean shapley
+library(readr)
+library(ggh4x) # for strips 
+
+library(corrplot)
+library(ggcorrplot)
+library(RColorBrewer)
+library(lares)
+
+library(tidyverse)
+library(tidymodels)
+library(randomForestExplainer)
+
+today <- format(Sys.time(), "%Y%m%d"); print(today)
+datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
+# datadir <- "C:/wanluwen/Code/SEETileDrain_MidWest/figure"
+truth_datadir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth"
+ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20240615/"
+
+# load pre-saved objects: phi-df and shapley_MDA_Gini 
+load(paste0(datadir, "mydata.RData")) 
+
+set.seed(1234)
+```
+
+## 1.1 universal - setting 
+```{r}
+# for importance metrix 
+td_levels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
+td_labels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
+td_colors <- c("#1f78b4","#a6cee3","#8dd3c7","#b2df8a","#fb9a99","#ff7f00",'#fdbf6f',"#cab2d6","#807dba","#33a02c","#ffff99")  ## "#8dd3c7",
+gear.cols <- c("TerraClimate" = "#1f78b4",
+               "GridMET" = "#a6cee3",
+               "SMAP" = "#8dd3c7",
+               "MODIS" = "#b2df8a",
+               "NED" = "#fb9a99",
+               "gSSURGO" = "#ff7f00",
+               "Polaris" = "#fdbf6f",
+               "NHD" = "#cab2d6",
+               "HLR" = "#807dba",
+               "Landsat" = "#33a02c",
+               "CDL" = "#ffff99") 
+gear.cols.df <- data.frame(td_labels = td_labels, td_colors = td_colors)
+
+font_size = 8
+title_size = 10
+
+# for boxplot, variable difference 
+tdlevels <- c("Tile", 'Non-tile')
+tdlabels <- c("Tile", 'Non-tile')
+tdcolors <- c("#386cb0","#41ab5d")
+tdcolors <- c("royalblue1", "skyblue1")
+```
+
+## 1.2 universal - confusion matrix and visualization 
+```{r}
+# https://stackoverflow.com/questions/23891140/r-how-to-visualize-confusion-matrix-using-the-caret-package
+# create a function that lays out the rectangles as needed to showcase the confusion matrix in a more visually appealing fashion:
+draw_confusion_matrix <- function(cm) {
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix', cex.main=2.5)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#41ab5d')
+  text(195, 435, 'nonTile', cex=1.5) # metirx is 0, 1, so nonTile first 
+  rect(250, 430, 340, 370, col='#386cb0')
+  text(295, 435, 'Tile', cex=1.5)
+  text(125, 370, 'Predicted', cex=1.6, srt=90, font=2) # 
+  text(245, 450, 'Actual', cex=1.6, font=2)
+  rect(150, 305, 240, 365, col='#386cb0')
+  rect(250, 305, 340, 365, col='#41ab5d')
+  text(140, 400, 'nonTile', cex=1.5, srt=90)
+  text(140, 335, 'Tile', cex=1.5, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "Details", xaxt='n', yaxt='n',cex.main=2.5)
+  text(15, 85, names(cm$byClass[1]), cex=1.5, font=2) # sensitivity, based on  cf$byClass 
+  text(15, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(35, 85, names(cm$byClass[2]), cex=1.5, font=2) # Specificity       
+  text(35, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(60, 85, names(cm$byClass[3]), cex=1.5, font=2) # Pos Pred Value 
+  text(60, 70, round(as.numeric(cm$byClass[3]), 3), cex=1.2)
+  text(85, 85, names(cm$byClass[4]), cex=1.5, font=2) # Recall 
+  text(85, 70, round(as.numeric(cm$byClass[4]), 3), cex=1.2)
+  # text(90, 85, names(cm$byClass[7]), cex=1.5, font=2) #  F1 
+  # text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(50, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  
+  # add F1 score 
+  text(70, 35, names(cm$byClass)[7], cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$byClass[7]), 3), cex=1.4)
+}  
+
+draw_confusion_matrix_wan <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('a. Confusion Matrix', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#41ab5d')
+  text(195, 435, 'nonTile', cex=1.5) # metirx is 0, 1, so nonTile first 
+  rect(250, 430, 340, 370, col='#386cb0')
+  text(295, 435, 'Tile', cex=1.5)
+  text(125, 370, 'Predicted', cex=1.6, srt=90, font=2) # 
+  text(245, 450, 'Actual', cex=1.6, font=2)
+  rect(150, 305, 240, 365, col='#386cb0')
+  rect(250, 305, 340, 365, col='#41ab5d')
+  text(140, 400, 'nonTile', cex=1.5, srt=90)
+  text(140, 335, 'Tile', cex=1.5, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "Details", xaxt='n', yaxt='n',cex.main=2)
+  text(15, 85, colnames(cm$byClass)[1], cex=1.5, font=2) # sensitivity, based on  cf$byClass 
+  text(15, 70, round(as.numeric(cm$byClass[1,1]), 3), cex=1.2)
+  text(35, 85, colnames(cm$byClass)[2], cex=1.5, font=2) # Specificity       
+  text(35, 70, round(as.numeric(cm$byClass[1,2]), 3), cex=1.2)
+  text(60, 85, colnames(cm$byClass)[3], cex=1.5, font=2) # Pos Pred Value 
+  text(60, 70, round(as.numeric(cm$byClass[1,3]), 3), cex=1.2)
+  text(85, 85, colnames(cm$byClass)[4], cex=1.5, font=2) # Recall 
+  text(85, 70, round(as.numeric(cm$byClass[1,4]), 3), cex=1.2)
+  # text(90, 85, names(cm$byClass[7]), cex=1.5, font=2) #  F1 
+  # text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # # add balanced acuracy, but it equals(sensitivity + specificity)/2
+  # text(70, 35, names(cm$byClass[11]), cex=1.5, font=2)
+  # text(70, 20, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+  
+  # add acuracy
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  
+  # add Kappa
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(50, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  
+   # add F1 score 
+  text(70, 35, colnames(cm$byClass)[7], cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$byClass[1,7]), 3), cex=1.4)
+
+  # # add in the accuracy information 
+  # # cf$overall: Accuracy,Kappa,AccuracyLower,AccuracyUpper,AccuracyNull,AccuracyPValue,McnemarPValue 
+  # text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  # text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  # text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  # text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}  
+```
+
+# 2 get data ready 
+```{r}
+# 1. prepare data ------------------------------------------------------------
+# read the new train and test 
+nontile_tain <- st_read(paste0(ground_dir,'Nontile_tileBbdy_points_eraseNDSD_500mfishID_train.shp'))
+nontile_test <- st_read(paste0(ground_dir,'Nontile_tileBbdy_points_eraseNDSD_500mfishID_test.shp'))
+tile_tain <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_train.shp'))
+tile_test <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_test.shp'))
+nrow(nontile_tain) + nrow(nontile_test) + nrow(tile_tain) + nrow(tile_test) # 64108 
+
+nrow(nontile_tain) + nrow(tile_tain) # 51716
+nrow(nontile_test) + nrow(tile_test) # 12392 
+
+# these data was collected based on different train and test 
+tile_train2 <- read_csv(paste0(datadir,"Midwest_tile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+nontile_train2 <- read_csv(paste0(datadir,"Midwest_nontile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+test2 <- read_csv(paste0(datadir,"/Midwest_test_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+nrow(tile_train2) + nrow(nontile_train2) + nrow(test2) # 60938
+nrow(tile_train2) + nrow(nontile_train2) # 48982
+nrow(test2) # 11956
+# 64796 - 60938 = 3858, so we missed 3858/64796=5% points, some holes in input variables
+
+# get all variables for train and test data 
+names(tile_train2)
+names(nontile_train2)
+names(test2)
+unique(tile_train2$TD)
+unique(nontile_train2$TD)
+data <- rbind(tile_train2, nontile_train2,test2)
+
+# since we are updating the spliting methods (500 m apart for train and test)
+# so need to form the new train and test 
+unique(data$TD)
+
+# merge tain and test from tile and non-tile 
+names(nontile_tain)
+names(tile_tain)
+nontile_tain <- nontile_tain[,c("Num","ID_fishnet")]
+tile_tain <- tile_tain[,c("Num","ID_fishnet")]
+
+# tranform and merge 
+st_crs(tile_tain) 
+st_crs(nontile_tain) 
+nontile_tain <- st_transform(nontile_tain, crs = st_crs(tile_tain)) 
+train3 <- rbind(nontile_tain,tile_tain)
+names(train3)
+train3 <- as.data.frame(train3)
+train3 <- train3[,c("Num","ID_fishnet")]
+
+# merge tain and test 
+names(nontile_test)
+names(tile_test)
+nontile_test <- nontile_test[,c("Num","ID_fishnet")]
+tile_test <- tile_test[,c("Num","ID_fishnet")]
+
+# tranform and merge 
+st_crs(tile_test) 
+st_crs(nontile_test) 
+nontile_test <- st_transform(nontile_test, crs = st_crs(tile_test)) 
+test3 <- rbind(nontile_test,tile_test)
+names(test3)
+test3 <- as.data.frame(test3)
+test3 <- test3[,c("Num","ID_fishnet")]
+class(test3)
+class(train3)
+
+names(train3)
+train_df <- merge(x = train3, y = data, by = "Num", all.x = TRUE)
+test_df <- merge(x = test3, y = data, by = "Num", all.x = TRUE)
+
+names(test_df)
+
+train1 <- within(train_df, TD[TD == 1] <- 'Tile')
+train <- within(train1, TD[TD == 0] <- 'Non-tile')
+
+test1 <- within(test_df, TD[TD == 1] <- 'Tile')
+test <- within(test1, TD[TD == 0] <- 'Non-tile')
+
+# only keep the columns we need 
+names(train)
+train_data <- train[, !(colnames(train) %in% c("system:index","ID_fishnet","Id","Join_Cou_1","Join_Count","MERGE_SRC",
+                                            "Num","TARGET_FID","TARGET_F_1","month","year",".geo","random","geometry"))]
+names(train_data)
+
+names(test)
+test_data <- test[, !(colnames(test) %in% c("system:index","CID","ID_fishnet","Id",
+                                                     "Join_Cou_1","Join_Count","MERGE_SRC",
+                                                     "Num","TARGET_FID","TARGET_F_1","month","year",".geo","RASTERVALU","random","geometry"))]
+names(test_data)
+class(test)
+
+# check whether there are NAs
+# remove all rows that contains at least one NA by using the command na. omit(df)
+train_df <- na.omit(train_data)  ############ some NAs: (51716-48982)/48982 = 0.05581642
+test_df <- na.omit(test_data) ## (12392-11956)/11956 = 0.03646705
+
+names(train_df)
+
+# numbers for publication 
+train_df_tile <- train_df %>%
+  filter (TD == "Tile") # 26442
+
+train_df_nontile <- train_df %>%
+  filter (TD == "Non-tile") # 22540
+
+test_df_tile <- test_df %>%
+  filter (TD == "Tile") # 2281
+
+test_df_nontile <- test_df %>%
+  filter (TD == "Non-tile") # 9675
+
+# we cant continue use these points as training or test , so merge first 
+traindata <- train_df
+testdata <- test_df
+unique(traindata$TD)
+
+names(traindata)
+traindata_select <- traindata
+testdata_select <- testdata
+```
+
+## 2.1 export the actual ground truth point for map in the MS 
+```{r}
+# Not all the points are exported using the sample region method
+names(train_df)
+train <- train[,c("Num","TD")]
+names(test)
+test <- test[,c("Num","TD")]
+allData <- rbind(train,test) #
+
+tile <- st_read(paste0(truth_datadir,"./2017update20230329/AllTile_14states_bdry_120m_SJ.shp"))
+nontile <- st_read(paste0(truth_datadir,"./tile-nontile-points-20210727/20230329/Nontile_tileBbdy_points_eraseNDSD.shp"))
+nontile <- st_transform(nontile, crs = st_crs(tile))
+st_crs(tile)
+st_crs(nontile)
+
+
+tile_used <- tile[(tile$Num %in% allData$Num),]  
+nontile_used <- nontile[(nontile$Num %in% allData$Num),] 
+
+# # write out
+names(tile_used)
+fname <- paste0(ground_dir,today,'_','tile.shp'); fname
+st_write(tile_used, dsn = fname, driver = "ESRI Shapefile") # 22401
+
+fname <- paste0(ground_dir,today, '_','nontile.shp'); fname
+st_write(nontile_used, dsn = fname, driver = "ESRI Shapefile") # 33047
+
+
+############  train
+tile_train <- tile[(tile$Num %in% train$Num),]  
+nontile_train <- nontile[(nontile$Num %in% train$Num),] 
+
+names(tile_train)
+names(nontile_train)
+tile_train_select <- tile_train[,c("TD","Num","geometry","sources")]
+nontile_train_select <- nontile_train[,c("TD","Num","geometry")]
+nontile_train_select$sources <- "likely"
+names(tile_train_select)
+names(nontile_train_select)
+
+train_tile_nontile <- rbind(tile_train_select,nontile_train_select)
+# write out
+fname <- paste0(ground_dir,today, '_','train_tile_nontile.shp'); fname
+st_write(train_tile_nontile, dsn = fname, driver = "ESRI Shapefile")
+
+############  test
+tile_test <- tile[(tile$Num %in% test$Num),]  #8295
+nontile_test <- nontile[(nontile$Num %in% test$Num),]  #8295
+
+names(tile_test)
+names(nontile_test)
+tile_test_select <- tile_test[,c("TD","Num","geometry","sources")]
+nontile_test_select <- nontile_test[,c("TD","Num","geometry")]
+nontile_test_select$sources <- "likely"
+names(tile_test_select)
+names(nontile_test_select)
+
+test_tile_nontile <- rbind(tile_test_select,nontile_test_select)
+
+
+fname <- paste0(ground_dir,today, '_','test_tile_nontile.shp'); fname
+st_write(test_tile_nontile, dsn = fname, driver = "ESRI Shapefile")
+```
+
+## 2.2 Successively eliminate lesser important highly-correlated variables
+```{r}
+#######################################  Successively eliminate lesser important highly-correlated variables######################################################
+# Step 1: Train the Random Forest model
+class(traindata_select$TD)
+unique(traindata_select$TD)
+traindata_select$TD <- as.factor(traindata_select$TD)
+mtry_n <- floor(sqrt(ncol(testdata_select)));mtry_n
+
+model <- randomForest(as.factor(TD) ~., data = traindata_select, # If you want to do classification, you should convert TD to a factor. Otherwise, the outcome is being treated as a continuous variable.
+                       mtry = mtry_n, # change to the best mtry
+                       ntree = 500,
+                       importance = TRUE,
+                       proximity = FALSE,
+                       na.action = na.roughfix)  # 
+
+
+# Step 2: Get variable importance scores
+importance <- importance(model, scale = FALSE) 
+importance
+
+
+# should use type = 1 cause mean decrease (permutation based)is better than gini 
+# Step 3: Identify highly correlated variables
+
+# this is used in dissertation, select r > 0.8 from upper triangle, but I want to find by r order 
+    # cor_matrix <- cor(traindata_select[, -which(names(traindata_select) == "TD")])
+    # w <- which(abs(cor_matrix) > 0.8 & row(cor_matrix) < col(cor_matrix), arr.ind=TRUE) ## row(cor_matrix) < col(cor_matrix), only select from the upper triangle 
+    # high_cor <- matrix(colnames(cor_matrix)[w],ncol = 2) ## reconstruct names from positions
+    # high_cor_df <- as.data.frame(high_cor)
+
+# order r value 
+# Set upper triangle elements to NA
+cor_matrix <- cor(traindata_select[, -which(names(traindata_select) == "TD")])
+cor_matrix <- as.matrix(cor_matrix)
+cor_matrix[upper.tri(cor_matrix)] <- NA
+
+high_cor <- cor_matrix %>%
+  as.data.frame() %>%
+  dplyr::mutate(x = row.names(.)) %>%
+  dplyr::select(x, everything()) %>%
+  gather(key = 'y', value = 'coef', 2:ncol(.)) %>%
+  dplyr::filter(x != y, !is.na(coef)) %>%
+  arrange(desc(abs(coef))) %>%
+  dplyr::filter(abs(coef) > 0.8)
+  
+
+while (nrow(high_cor) >= 1) {
+  # Code block to be executed as long as the condition (no high cors) is true
+  print ("Still high correlations!")
+  var1 <- high_cor[1,1]
+  var2 <- high_cor[1,2]
+  importance_var1 <- importance[var1, "MeanDecreaseAccuracy"]
+  importance_var2 <- importance[var2, "MeanDecreaseAccuracy"]
+  
+  if (importance_var1 > importance_var2) {
+    traindata_select <- traindata_select[, -which(names(traindata_select) == var2)]
+    cat("drop", var2)
+  } else {traindata_select <- traindata_select[, -which(names(traindata_select) == var1)]
+   cat("drop", var1)
+  }
+  names(traindata_select)
+  # now traindata_select is updated 
+  mtry_n <- floor(sqrt(ncol(traindata_select))); mtry_n
+  
+  model <- randomForest(as.factor(TD) ~., data = traindata_select,
+                       mtry = mtry_n, # change to the best mtry
+                       ntree = 500,
+                       importance = TRUE,
+                       proximity = FALSE,
+                       na.action = na.roughfix)  # 
+  importance <- importance(model)
+  
+  cor_matrix <- cor(traindata_select[, -which(names(traindata_select) == "TD")])
+  cor_matrix <- as.matrix(cor_matrix)
+  cor_matrix[upper.tri(cor_matrix)] <- NA
+  
+  high_cor <- cor_matrix %>%
+    as.data.frame() %>%
+    dplyr::mutate(x = row.names(.)) %>%
+    dplyr::select(x, everything()) %>%
+    gather(key = 'y', value = 'coef', 2:ncol(.)) %>%
+    dplyr::filter(x != y, !is.na(coef)) %>%
+    arrange(desc(abs(coef))) %>%
+    dplyr::filter(abs(coef) > 0.8)
+  
+  print(nrow(high_cor))
+  # cor_matrix <- cor(traindata_select[, -which(names(traindata_select) == "TD")])
+  # w <- which(abs(cor_matrix) > 0.8 & row(cor_matrix) < col(cor_matrix), arr.ind=TRUE) ## row(cor_matrix) < col(cor_matrix), only select from the upper triangle 
+  # high_cor <- matrix(colnames(cor_matrix)[w], ncol = 2) ## reconstruct names from positions
+  # print(nrow(high_cor))
+}
+
+names(traindata_select)
+
+# use 0.8 as threshold, drop by coef from highest, 26 variables were dropped - journal submission 
+  # SSM_mediean_spr
+  # SSM_median_summ
+  # aridity_summ
+  # pr_spr
+  # SUSM_max_spr
+  # aridity_grow
+  # SSM_max_spr
+  # SMP_range_spr
+  # aet_summ_terra
+  # SUSM_median_summ
+  # aet_spr_terra
+  # Tr_SWIR1_Summer_max
+  # PAW_1m
+  # clay_1m
+  # NDVI_Summer_max
+  # Tr_SWIR2_Grow_max
+  # ksat_1m
+  # NDWI_Grow_max
+  # SMP_max_spr
+  # NDVI_Spring_max
+  # drop nightLST_max_grow
+  # Tr_SWIR1_Spring_max
+  # SMP_median_spr
+  # diffLST_median_summ
+  # pr_summ
+  # SSM_range_spr
+
+names(traindata_select)
+
+finallist <- c("CanalDitchD", "HLR","NDVI_Grow_max","NDWI_Spring_max","NDWI_Summer_max",
+               "SMP_median_summ","SUSM_median_spr","SUSM_range_spr","Tr_SWIR1_Grow_max","Tr_SWIR2_Spring_max","Tr_SWIR2_Summer_max",
+               "aet_grow_terra","aridity_preGrow_3yr","aridity_spr","clay_mean_0_5","cropland","dayLST_median_grow",
+               "dayLST_median_spr","dayLST_median_summ","dayLST_range_grow",
+               "dayLST_range_spr","dayLST_range_summ","diffLST_median_grow","diffLST_median_spr","ksat_mean_0_5",
+               "nightLST_max_spr","nightLST_max_summ","paw_mean_0_5","pr_grow","slope_mean","soilDrainClass")
+
+# keep variables needed for train and test data
+traindata_final <- traindata_select[, (colnames(traindata_select)) %in% c(finallist,"TD")]
+names(traindata_final)
+
+testdata_final <- testdata_select[, (colnames(testdata_select)) %in% c(finallist,"TD")]
+names(testdata_final)
+
+```
+
+## 2.3 Final variables and correlations 
+```{r}
+
+# http://www.sthda.com/english/wiki/visualize-correlation-matrix-using-correlogram
+## S:\Users\luwen\Code\states_tile_detection\scripts\RandomForest\reference
+
+# check correlation 
+traindata_Select_cor <- traindata_final[, -which(names(traindata_final) == "TD")]
+
+M <- cor(traindata_Select_cor)
+head(round(M,2))
+
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+
+# png default settings are dpi=72, height=480, width=480. 
+# png(filename = paste0(datadir,"Correlation_vars_2024.png"), pointsize=25, height = 1200, width = 1200)
+
+#  By adding error handling with tryCatch, you'll be able to see if there are any errors that occur during the plotting and saving process. 
+tryCatch({
+  # Start PNG device
+  # png(filename = paste0(datadir,"Correlation_vars_2024.png"), pointsize = 20, height = 1200, width = 1200)
+  # Start PDF device
+  pdf(file = paste0(datadir, "Correlation_vars_2024.pdf"), width = 10, height = 10)
+  
+  corrplot(corr = M, 
+         method = "ellipse", # named 'circle' (default), 'square', 'ellipse', 'number', 'pie', 'shade' and 'color'. 
+         type = "lower",  # 'full' (default), 'upper' or 'lower'
+         # col=col(200),  
+         col = brewer.pal(n = 10, name = "RdBu"), # colorblin safe: BrBG, RdBu, RdYlBu
+         diag = F,  # whether display the correlation coefficients on the principal diagonal
+         order = "original", 
+                        # 'original' for original order (default).
+                        # 'AOE' for the angular order of the eigenvectors.
+                        # 'FPC' for the first principal component order.
+                        # 'hclust' for the hierarchical clustering order.
+                        # 'alphabet' for alphabetical order.
+         addCoef.col = "black", # Add coefficient of correlation
+         addCoefasPercent = FALSE,  # translate coefficients into percentage style for spacesaving.
+         tl.col="black", 
+         # tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         tl.cex = 0.6,
+         number.cex= 0.6,
+         #p.mat = p.mat, sig.level = 0.01, insig = "blank",
+         mar=c(0,0,1,0)
+         # hide correlation coefficient on the principal diagonal
+         )
+  # Close PNG device
+  dev.off()
+}, error = function(e) {
+  # Print error message if any
+  print(paste("Error:", e))
+})
+
+corr_cross(df = traindata_Select_cor, rm.na = T, max_pvalue = 0.05, top = 5, grid = T)
+
+  # high_cor_m <- M %>%
+  #   as.data.frame() %>%
+  #   dplyr::mutate(x = row.names(.)) %>%
+  #   dplyr::select(x, everything()) %>%
+  #   gather(key = 'y', value = 'coef', 2:ncol(.)) %>%
+  #   dplyr::filter(x != y, !is.na(coef)) %>%
+  #   arrange(desc(abs(coef))) 
+```
+
+
+# 3 Random Forest 
+## 3.0  change variable name 
+```{r}
+names(testdata_final)
+names(traindata_final)
+# # change the names for publication 
+
+testdata_final_rena <- testdata_final %>% 
+        rename("Canal_ditch_dist" = "CanalDitchD",
+               "HLR" = "HLR",
+               "NDVI_grow_max" = "NDVI_Grow_max",
+               "NDWI_spr_max" = "NDWI_Spring_max",
+               "NDWI_summ_max" = "NDWI_Summer_max",
+               "SMP_median_summ" = "SMP_median_summ",
+               "SUSM_median_spr" = "SUSM_median_spr",
+               "SUSM_range_spr" = "SUSM_range_spr",
+               "TD" = "TD",
+               "Tr_swir1_grow_max" = "Tr_SWIR1_Grow_max",
+               "Tr_swir2_spr_max" =  "Tr_SWIR2_Spring_max",
+               "Tr_swir2_summ_max" = "Tr_SWIR2_Summer_max",
+               "AET_grow" =  "aet_grow_terra",
+               "Aridity_preGrow_3yr" = "aridity_preGrow_3yr",
+               "Aridity_spr" = "aridity_spr",
+               "Clay_mean_5cm" = "clay_mean_0_5",
+               "Cropland" = "cropland",
+               "DayLST_median_grow" = "dayLST_median_grow",
+               "DayLST_median_spr" = "dayLST_median_spr",
+               "DayLST_median_summ" = "dayLST_median_summ",
+               "DayLST_range_grow" = "dayLST_range_grow",
+               "DayLST_range_spr" = "dayLST_range_spr",
+               "DayLST_range_summ" = "dayLST_range_summ",
+               "DiffLST_median_grow" = "diffLST_median_grow",
+               "DiffLST_median_spr" = "diffLST_median_spr",
+               "Ksat_mean_5cm" = "ksat_mean_0_5",
+               "NightLST_max_spr" = "nightLST_max_spr",
+               "NightLST_max_summ" = "nightLST_max_summ",
+               "Paw_mean_5cm" = "paw_mean_0_5",
+               "Precip_grow" = "pr_grow",
+               "Slope_mean" = "slope_mean",
+               "Soil_drain_class" = "soilDrainClass")
+
+
+traindata_final_rena <- traindata_final %>% 
+        rename("Canal_ditch_dist" = "CanalDitchD",
+               "HLR" = "HLR",
+               "NDVI_grow_max" = "NDVI_Grow_max",
+               "NDWI_spr_max" = "NDWI_Spring_max",
+               "NDWI_summ_max" = "NDWI_Summer_max",
+               "SMP_median_summ" = "SMP_median_summ",
+               "SUSM_median_spr" = "SUSM_median_spr",
+               "SUSM_range_spr" = "SUSM_range_spr",
+               "TD" = "TD",
+               "Tr_swir1_grow_max" = "Tr_SWIR1_Grow_max",
+               "Tr_swir2_spr_max" =  "Tr_SWIR2_Spring_max",
+               "Tr_swir2_summ_max" = "Tr_SWIR2_Summer_max",
+               "AET_grow" =  "aet_grow_terra",
+               "Aridity_preGrow_3yr" = "aridity_preGrow_3yr",
+               "Aridity_spr" = "aridity_spr",
+               "Clay_mean_5cm" = "clay_mean_0_5",
+               "Cropland" = "cropland",
+               "DayLST_median_grow" = "dayLST_median_grow",
+               "DayLST_median_spr" = "dayLST_median_spr",
+               "DayLST_median_summ" = "dayLST_median_summ",
+               "DayLST_range_grow" = "dayLST_range_grow",
+               "DayLST_range_spr" = "dayLST_range_spr",
+               "DayLST_range_summ" = "dayLST_range_summ",
+               "DiffLST_median_grow" = "diffLST_median_grow",
+               "DiffLST_median_spr" = "diffLST_median_spr",
+               "Ksat_mean_5cm" = "ksat_mean_0_5",
+               "NightLST_max_spr" = "nightLST_max_spr",
+               "NightLST_max_summ" = "nightLST_max_summ",
+               "Paw_mean_5cm" = "paw_mean_0_5",
+               "Precip_grow" = "pr_grow",
+               "Slope_mean" = "slope_mean",
+               "Soil_drain_class" = "soilDrainClass")
+
+```
+
+## 3.1 RF with the subsetting variables - less-correlated and more important 
+```{r}
+# now use these variable to do classification 
+
+# Number of variables randomly sampled as candidates at each split. Note that the default values are different for classification (sqrt(p) where p is number of variables in x) and regression (p/3)
+names(traindata_final_rena)
+class(traindata_final_rena$TD)
+unique(traindata_final_rena$TD)
+# traindata_final$TD <- as.factor(traindata_final$TD)
+
+mtry_n <- floor(sqrt(ncol(traindata_final_rena))); mtry_n
+set.seed(1234)
+model <- randomForest(as.factor(TD) ~., data = traindata_final_rena,
+                     mtry = mtry_n, # change to the best mtry
+                     ntree = 500,
+                     importance = TRUE,
+                     proximity = FALSE,
+                     na.action = na.roughfix)  # 
+
+importance <- importance(model)
+
+# If you want to do classification, you should convert TD to a factor. Otherwise, the outcome is being treated as a continuous variable.
+# na.roughfix is used to impute missing values by the random forest model.There are two ways in which it works.If the data is numeric,na’s are replaced by median values and if the variable is categorical,the most frequently occurring value is taken.
+model
+
+```
+
+
+## 3.2 confusion matrix and visualization for testdata 
+```{r}
+# Use the confusionMatrix Function to Create a Confusion Matrix in R
+p2 <- predict(model, testdata_final_rena)
+cf <- confusionMatrix(data = p2, as.factor(testdata_final_rena$TD), mode = "everything", positive = "Tile")
+cf
+ #  confusionMatrix(data = p2, as.factor(testdata$TD))
+
+```
+
+```{r}
+# visualization
+draw_confusion_matrix(cf)
+
+# # Use the fourfoldplot Function to Visualize Confusion Matrix in R
+# ctable <- as.table(matrix(c(2443,127,122,3262), nrow = 2, byrow = TRUE))
+# fourfoldplot(ctable, color = c("cyan", "pink"),
+#              conf.level = 0, margin = 1, main = "Confusion Matrix")
+```
+
+```{r}
+# save visualization
+tryCatch({
+  # Start PNG device
+  png(filename = paste0(datadir,"confusion_matrix_allPoints_selectVars_2024.png"))
+  draw_confusion_matrix(cf)
+  dev.off()
+}, error = function(e) {
+  # Print error message if any
+  print(paste("Error:", e))
+})
+
+```
+
+## 3.6 Importance
+```{r }
+# to check important variables
+# https://stats.stackexchange.com/questions/349122/what-is-the-difference-between-rfimportance-and-importancerf-in-the-package-r
+# What is the difference between rf$importance and importance(rf) in the package randomForest in R?
+# By default, importance() scales the results by the standard error of the measure (see the help page). If you specify importance with the parameter scale=FALSE, you will get identical results as from my_forest$importance
+
+model
+treesize(model, terminal=TRUE)
+      # importance2 <- importance(rf_train, type = 2) #  	2=mean decrease in node impurity
+      # head(importance2)
+      # # either 1 or 2, specifying the type of importance measure (1=mean decrease in accuracy)
+      # importance1 <- importance(rf_train, type = 1) # 
+      # head(importance1)
+
+# # In the randomForest package, type = 2 is the default, 
+# but we should report the mean decrease in impurity importance metrics - mean decrease accuracy.
+# create_rfplot(rf_train, type = 2) 
+
+importanceF <- importance(model, type = 1, scale = FALSE) 
+# should use type = 1 cause mean decrease (permutation based)is better than gini 
+head(importanceF)
+
+importance_T <- importance(model, scale = TRUE) # scale = F is more accurate
+head(importance_T)
+
+importance <- model$importance
+head(importance)
+      # rownames(importance)   
+
+# importance(rf_train)   # default is scale = FALSE      
+varImpPlot(model, sort = TRUE, n.var = 20, scale = FALSE)   
+# # sort as decreasing; How many variables to show? (Ignored if sort=FALSE.)
+
+rownames(importance)
+colnames(importance)
+importance <- as.data.frame(importance)
+df <- tibble::rownames_to_column(importance, "Bands")
+
+names(df)
+df_select <- df[,c("Bands","MeanDecreaseAccuracy","MeanDecreaseGini")]
+
+# add another column to bands type, like climate, soil, satellite
+# df$type[df$Bands == "cropland"] <- "land" 
+df1 <- df_select %>%
+  dplyr::mutate(
+    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Landsat', ''),
+    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'MODIS', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'SMP.|SSM.|SUSM.'), 'SMAP', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'AET.'), 'TerraClimate', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Aridity.|Precip_'), 'GridMET', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class'), 'gSSURGO', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Slope_mean'), 'NED', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'HLR'), 'HLR', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Canal'), 'NHD', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Paw_|paw_|Clay_|Ksat_'), 'Polaris',group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Cropland'), 'CDL',group)) 
+  # dplyr::filter(Bands != 'Cropland')
+# check whether the variables was assigned to a correct group 
+# group = ifelse(str_detect(string = Bands, pattern = 'VH|VV'), 'SAR', group),
+
+fname <- paste0(datadir,today, '_','RF_R_importance_allPoints_selectVars.csv'); fname
+write_csv(df1, file = fname)
+```
+
+### 3.6.1 MeanDecreaseGini
+```{r}
+
+# 20240429_RF_R_importance_allPoints_selectVars.csv
+df1 <- read_csv(paste0(datadir,"20240429", '_','RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
+unique(df1$group)
+df1$group <- factor(x = df1$group, levels = td_levels, labels = td_labels)  
+levels(df1$group)
+
+Gini <- df1 %>%
+  mutate(name = fct_reorder(Bands,MeanDecreaseGini)) %>%  ## set the levels in order we want
+  ggplot(aes(x = name, y = MeanDecreaseGini, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+  coord_flip() +
+  ggtitle("Mean Decrease Gini") +
+  labs(y = "Mean Decrease Gini", x = "Bands") +
+  # labs(y = "Importance", x = "Variable") +
+  # scale_fill_manual(values = c("#6baed6",'#fdb462',"#74c476","#006d2c","#00C5FB")) +  #"#999999"
+  # scale_fill_manual(values = c("#74C476","#00C5FB",'#FFDA83',"#DFD572","#ACCE6F")) +  
+  scale_fill_manual(values = td_colors) +  
+  theme_bw(base_size = font_size)+
+  #geom_text(aes(y = MeanDecreaseGini + 30, label = rank), size = 5, color = 'black') +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth = 1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+        legend.position = c(0.75, 0.15),legend.title = element_blank(),
+        legend.text = element_text(color = "black", size = font_size),
+        axis.title = element_blank(),
+        axis.text = element_text(color = "black", size = font_size),
+        legend.background = element_rect(color = "black",linewidth = 0.5))   #  axis.title.x = element_blank()
+Gini
+```
+
+
+### 3.6.2 MeanDecreaseAccuracy
+```{r }
+# How much the model accuracy decreases if we drop that variable.
+# MDA gives a rough estimate of the loss in prediction performance when that particular variable is omitted from the training set. Caveat: if two variables are somewhat redundant, then omitting one of them may not lead to massive gains in prediction performance, but would make the second variable more important.
+
+# Do note that these measures are used to rank variables in terms of importance and, thus, their absolute values could be disregarded.
+
+accuDecrease <- df1 %>%
+  mutate(name = fct_reorder(Bands,MeanDecreaseAccuracy)) %>%  ## set the levels in order we want
+  ggplot(aes(x = name, y = MeanDecreaseAccuracy, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+  coord_flip() +
+  ggtitle("Mean Decrease Accuracy") +
+  labs(y = "Mean Decrease Accuracy", x = "Bands") +
+  # labs(y = "Importance", x = "Variable") +
+  scale_fill_manual(values = td_colors) +  
+  theme_bw(base_size = font_size)+
+  #geom_text(aes(y = MeanDecreaseGini + 30, label = rank), size = 5, color = 'black') +
+  # theme(panel.border = element_rect(colour = "black", fill=NA, size=1),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+  #       plot.title = element_text(hjust = 0.5),legend.position = c(0.65, 0.1),legend.title = element_blank(),
+  #       axis.title = element_blank())   #  axis.title.x = element_blank()
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+        legend.position = c(0.75, 0.15),legend.title = element_blank(),
+        legend.text = element_text(color = "black", size = font_size),
+        axis.title = element_blank(),
+        axis.text = element_text(color = "black", size = font_size),
+        legend.background = element_rect(color = "black",linewidth = 0.5))   #  axis.title.x = element_blank()
+accuDecrease
+```
+
+
+### 3.6.3 merge Gini and Accuracy Decrease figure  
+```{r}
+figure <- ggarrange(accuDecrease,Gini)
+figure
+```
+
+```{r}
+fname <- paste0(datadir,today, '_','RFinR_Gini_Accuracy_allPoints_selectVars.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, height = 10, units = 'in')
+
+fname <- paste0(datadir,today, '_','RFinR_Gini_Accuracy_allPoints_selectVars.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, height = 10, units = 'in')
+```
+
+```{r}
+# copied the function and only changed the point size 
+plot_multi_way_importance_wan <- function(importance_frame, x_measure = "mean_min_depth",
+                                      y_measure = "times_a_root", size_measure = NULL,
+                                      min_no_of_trees = 0, no_of_labels = 10,
+                                      main = "Multi-way importance plot"){
+  variable <- NULL
+  if(any(c("randomForest", "ranger") %in% class(importance_frame))){
+    importance_frame <- measure_importance(importance_frame)
+  }
+  data <- importance_frame[importance_frame$no_of_trees > min_no_of_trees, ]
+  data_for_labels <- importance_frame[importance_frame$variable %in%
+                                        important_variables(importance_frame, k = no_of_labels,
+                                                            measures = c(x_measure, y_measure, size_measure)), ]
+  if(!is.null(size_measure)){
+    if(size_measure == "p_value"){
+      data$p_value <- cut(data$p_value, breaks = c(-Inf, 0.01, 0.05, 0.1, Inf),
+                          labels = c("<0.01", "[0.01, 0.05)", "[0.05, 0.1)", ">=0.1"), right = FALSE)
+      plot <- ggplot(data, aes_string(x = x_measure, y = y_measure)) +
+        geom_point(aes(color = size_measure), size = 2) +
+        geom_point(data = data_for_labels, color = "black", stroke = 2, aes(alpha = "top"), size = 2, shape = 21) +
+        geom_label_repel(data = data_for_labels, aes(label = variable), show.legend = FALSE) +
+        theme_bw() + scale_alpha_discrete(name = "variable", range = c(1, 1))
+    } else {
+      plot <- ggplot(data, aes_string(x = x_measure, y = y_measure, size = size_measure)) +
+        geom_point(aes(colour = "black")) + geom_point(data = data_for_labels, aes(colour = "blue")) +
+        geom_label_repel(data = data_for_labels, aes(label = variable, size = NULL), show.legend = FALSE) +
+        scale_colour_manual(name = "variable", values = c("black", "blue"), labels = c("non-top", "top")) +
+        theme_bw()
+      if(size_measure == "mean_min_depth"){
+        plot <- plot + scale_size(trans = "reverse")
+      }
+    }
+  } else {
+    plot <- ggplot(data, aes_string(x = x_measure, y = y_measure)) +
+      geom_point(aes(colour = "black")) + geom_point(data = data_for_labels, aes(colour = "blue")) +
+      geom_label_repel(data = data_for_labels, aes(label = variable, size = NULL), show.legend = FALSE) +
+      scale_colour_manual(name = "variable", values = c("black", "blue"), labels = c("non-top", "top")) +
+      theme_bw()
+  }
+  if(x_measure %in% c("no_of_nodes", "no_of_trees", "times_a_root")){
+    plot <- plot + scale_x_sqrt()
+  } else if(y_measure %in% c("no_of_nodes", "no_of_trees", "times_a_root")){
+    plot <- plot + scale_y_sqrt()
+  }
+  if(!is.null(main)){
+    plot <- plot + ggtitle(main)
+  }
+  return(plot)
+}
+```
+
+### 3.6.4 randomForestExplainer
+```{r}
+# https://www.r-bloggers.com/2019/08/explaining-predictions-random-forest-post-hoc-analysis-randomforestexplainer-package/
+# https://cran.r-project.org/web/packages/randomForestExplainer/vignettes/randomForestExplainer.html#introduction
+# Though random forest model itself doesn’t need explicit one hot encoding, some of randomForestExplainer functions need dummy variables. Thus we will create them in our recipe.
+
+# create recipe object
+TD_recipe <- recipe(TD ~., data= traindata_final_rena) %>%
+  step_impute_knn(all_predictors()) %>% 
+  step_dummy(all_nominal(), -TD)
+
+# process the traing set/ prepare recipe(non-cv)
+TD_prep <- TD_recipe %>% 
+  prep(training = traindata_final_rena, retain = TRUE)
+
+set.seed(1234)
+rf_model <- rand_forest(trees = 500,
+                        mtry = 5, 
+                        mode = "classification") %>% 
+  set_engine(engine = "randomForest", importance = T, localImp = T) %>% 
+  fit(TD ~ ., data = juice(TD_prep))
+
+rf_model
+impt_frame <- measure_importance(rf_model$fit)
+
+impt_frame %>% 
+  head()
+
+# impt_df <- measure_importance(forest = rf_model$fit, mean_sample = "all_trees", measures = NULL)
+# impt_df %>% 
+#   head()  # same with impt_frame, so it takes default 
+
+depth_root <- plot_multi_way_importance(impt_frame, no_of_labels = 6)
+depth_root
+
+
+accuracy_gini <- plot_multi_way_importance(impt_frame, x_measure = "accuracy_decrease",
+                          y_measure = "gini_decrease", 
+                          #size_measure = "p_value", 
+                          no_of_labels = 10) 
+  
+accuracy_gini
+
+
+# plot_multi_way_importance(forest, size_measure = "no_of_nodes") # gives the same result as below but takes longer
+plot_multi_way_importance(impt_frame, size_measure = "no_of_nodes")
+
+
+# SELECT OPTIMAL IMPORTANCE SCORES TO PLOT 
+impt_frame_select <- impt_frame[,c("variable","mean_min_depth","no_of_nodes","accuracy_decrease","gini_decrease")]
+impt_frame_select
+plot_importance_ggpairs(impt_frame) # gini_decrease and mean_min_depth are significantly corelated
+plot_importance_rankings(impt_frame)
+
+md_frame <- min_depth_distribution(rf_model$fit)
+plot_min_depth_distribution(md_frame, mean_sample = "top_trees") # default mean_sample arg 
+
+#plot_predict_interaction(rf_model, traindata_select, "rm", "lstat")
+# explain_forest(rf_model, interactions = TRUE, data = traindata_select)
+
+```
+
+### 3.6.5 merge merge figure   
+```{r}
+figure <- ggarrange(accuracy_gini,depth_root)
+figure
+```
+
+  <!-- ```{r} -->
+  <!-- fname <- paste0(datadir,today, '_','RFinR_RF_explainer_allPoints_20Vars.png'); fname -->
+  <!-- ggsave(filename = fname, -->
+  <!--        plot = last_plot(), dpi = 100, width = 7, height = 4, units = 'in') -->
+
+  <!-- fname <- paste0(datadir,today, '_','RFinR_RF_explainer_allPoints_20Vars.pdf'); fname -->
+  <!-- ggsave(filename = fname, -->
+  <!--        plot = last_plot(), dpi = 100, width = 7, height = 4, units = 'in') -->
+  <!-- ``` -->
+
+### 3.6.6 scatter plot for MDA and Gini
+```{r}
+head(impt_frame)
+str(impt_frame)
+accuracy_gini_custom <- plot_multi_way_importance(impt_frame, x_measure = "accuracy_decrease",
+                          y_measure = "gini_decrease", 
+                          size_measure = "p_value", 
+                          no_of_labels = 10) +
+  # ggtitle("Multi-way Importance Plot") +
+  # plot.title = element_text(hjust = 0.5, color = "black", size = 14),
+  theme(plot.title = element_blank(),
+        legend.position = c(0.1,0.8),
+        legend.box.background = element_rect(colour = "black",fill="white")) +
+  labs(x = "Mean Decrease Accuracy", y = "Mean Accuracy Gini") 
+   
+accuracy_gini_custom
+
+# accuracy_gini <- plot_multi_way_importance(impt_frame, x_measure = "accuracy_decrease",
+#                           y_measure = "gini_decrease", 
+#                           #size_measure = "p_value", 
+#                           no_of_labels = 10) 
+# accuracy_gini
+```
+
+```{r}
+fname <- paste0(datadir,today, '_','RFinR_RF_explainer_scatter_allPoints_selectVars.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, height = 5, units = 'in')
+
+fname <- paste0(datadir,today, '_','RFinR_RF_explainer_scatter_allPoints_selectVars.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in')
+
+# fname <- paste0(datadir,today, '_','RFinR_RF_explainer_scatter_allPoints_selectVars_100dpi.png'); fname
+# ggsave(filename = fname,
+#        plot = last_plot(), dpi = 100, width = 7, height = 5, units = 'in')
+```
+
+
+## 3.7 local effects 
+```{r}
+library(iml)
+
+###########################  test ########################################################33
+    # # We create a Predictor object, that holds the model and the data. The iml package uses R6 classes: New objects can be created by calling Predictor$new().
+    # X <- traindata_select[which(names(traindata_select) != "TD")]
+    # predictor <- Predictor$new(rf_train, data = X, y = rf_train$TD, class = "Tile")
+    # # Besides knowing which features were important, we are interested in how the features influence the predicted outcome. The FeatureEffect class implements accumulated local effect plots, partial dependence plots and individual conditional expectation curves. 
+    # names(traindata_select)
+    # ale <- FeatureEffect$new(predictor, feature = "Canal_ditch_dist")
+    # ale$plot()
+    # 
+    # # You can also plot the feature effects for all features at once:
+    # effs <- FeatureEffects$new(predictor)
+    # plot(effs)
+
+# # Surrogate model
+# tree <- TreeSurrogate$new(predictor, maxdepth = 2)
+# plot(tree)
+# head(tree$predict(traindata_select))
+# lime.explain <- LocalModel$new(predictor, x.interest = X[1, ])
+# lime.explain$results
+# lime.explain$explain(X[2, ])
+# plot(lime.explain)
+# shapley <- Shapley$new(predictor, x.interest = X[1, ])
+# shapley$plot()
+
+
+# predictor$task
+# ale_iml <- FeatureEffect$new(predictor, feature = "Canal_ditch_dist")
+# p1_df <- ale_iml$results
+# ggplot(data = p1_df, aes(x = Canal_ditch_dist, y = .value)) + 
+#   geom_line(linewidth = 1) + 
+#   theme_bw()
+
+X <- traindata_final_rena[which(names(traindata_final_rena) != "TD")]
+predictor <- Predictor$new(model, 
+                           data = X, 
+                           y = model$TD,
+                           class = "Tile")
+
+# loop for all the variables 
+df <- data.frame(matrix(ncol = 4, nrow = 0))
+x <- c(".type",".value","Variable","varrs")
+colnames(df) <- x
+
+
+variables <- predictor$data$feature.names
+for (variable in variables) {
+  ale_iml_all <- FeatureEffect$new(predictor = predictor, feature = variable, method = "ale")
+  p1_df <- ale_iml_all$results
+  names(p1_df) <- c(".type",".value","Variable")
+  p1_df$varrs <- variable
+  df <- rbind(p1_df,df)
+}
+
+head(df)
+
+# df1 <- df %>%
+#   mutate(test = var == varrs)
+# var_l <- levels(df$var); var_l
+# levels(df$varrs)
+
+
+
+# make it as the MDA order
+# make it by the order of MDA 
+MDA <- read_csv(paste0(datadir,"20240429_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
+MDA <- read_csv("C:/Users/luven/Desktop/Midwest_Diss_20230802/20240429_RF_R_importance_allPoints_selectVars.csv",show_col_types = FALSE)
+
+MDAorder <- (MDA[order(MDA$MeanDecreaseAccuracy, decreasing = TRUE),])$Bands
+MDAorder
+df$var <- factor(df$varrs, levels = MDAorder) # to use the right order 
+
+top20Var <- c("AET_grow","NightLST_max_summ","Aridity_spr","SMP_median_summ","SUSM_median_spr",
+              "DayLST_range_grow","Soil_drain_class","Precip_grow","Slope_mean","Clay_mean_5cm",
+              "SUSM_range_spr","Canal_ditch_dist","DayLST_median_grow","HLR","Aridity_preGrow_3yr",
+              "DayLST_range_spr","NightLST_max_spr","Ksat_mean_5cm","DayLST_median_spr","DayLST_range_summ")
+length(top20Var)
+
+tail11var <- c("DayLST_median_summ","DiffLST_median_spr","DiffLST_median_grow","Paw_mean_5cm","NDWI_spr_max",
+               "Tr_swir2_spr_max","NDWI_summ_max","NDVI_grow_max","Tr_swir2_summ_max","Tr_swir1_grow_max","Cropland")
+```
+
+### 3.7.1 top20 line  
+```{r}
+df_top <- df[(df$varrs %in% top20Var),]
+unique(df_top$varrs)
+# add group name 
+names(df_top)
+names(MDA)
+MDA_sub <- MDA[,c("Bands","group")]
+df_top_group <- merge(df_top,MDA_sub,by.x = "varrs", by.y = "Bands", all.x = TRUE) %>%
+  left_join(., 
+            y = gear.cols.df, 
+            by =  c('group' = 'td_labels'))
+
+
+ggplot(data = df_top_group, aes(x = Variable, y = .value, fill = group)) + 
+  geom_line(linewidth = 1,color = "blue") +  # color = "blue"
+  #geom_smooth(formula = y~x, method = "loess") + 
+  facet_wrap(~varrs, ncol = 4, scales = "free") +
+  theme_bw(base_size = 7)+
+  labs(title = "Accumulated local effects for tile", x = "Variable values") +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(),
+         plot.title = element_text(hjust = 0.5,color = "black", size = title_size))
+#
+```
+
+### 3.7.2 top 20 line smooth 
+```{r}
+# change strip color 
+var_color_order <- df_top_group %>%
+  dplyr::distinct(varrs, group, td_colors) %>%
+  ## `varrs` does not have levles and here we need to add a level  
+  dplyr::mutate(varrs = factor(varrs, levels = top20Var),
+                ## convert a factor to integer so that we can order the color 
+                id = as.integer(varrs)) %>%
+  arrange(id)
+var_color_order_list <- var_color_order$td_colors
+strip <- strip_themed(background_x = elem_list_rect(fill = var_color_order_list))
+
+df_top_group %>%
+  dplyr::mutate(varrs = factor(varrs, levels = top20Var)) %>%
+  ggplot(., aes(x = Variable, y = .value)) + 
+  geom_smooth(formula = y~x, method = "loess") + 
+  facet_wrap2(~varrs, ncol = 4, scales = "free", strip = strip) +
+  theme_bw(base_size = 8)+
+  labs(title = "Accumulated local effects for tile", x = "Variable values") +
+  # scale_fill_manual(breaks = td_labels,values = td_colors) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(),
+        plot.title = element_text(hjust = 0.5,color = "black", size = title_size))
+```
+
+```{r}
+fname <- paste0(datadir,today, '_','ALE_top20vars_lines_smooth.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in')
+fname <- paste0(datadir,today, '_','ALE_top20vars_lines_smooth.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in')
+```
+### 3.7.3 tail11 line  
+```{r}
+df_tail <- df[(df$varrs %in% tail11var),]
+unique(df_tail$varrs)
+# add group name 
+names(df_tail)
+names(MDA)
+MDA_sub <- MDA[,c("Bands","group")]
+df_tail_group <- merge(df_tail,MDA_sub,by.x = "var", by.y = "Bands", all.x = TRUE) %>%
+  left_join(., 
+            y = gear.cols.df, 
+            by =  c('group' = 'td_labels'))
+
+var_color_order <- df_tail_group %>%
+  dplyr::distinct(varrs, group, td_colors) %>%
+  ## `varrs` does not have levles and here we need to add a level  
+  dplyr::mutate(varrs = factor(varrs, levels = tail11var),
+                ## convert a factor to integer so that we can order the color 
+                id = as.integer(varrs)) %>%
+  arrange(id)
+var_color_order
+var_color_order_list <- var_color_order$td_colors
+
+strip <- strip_themed(background_x = elem_list_rect(fill = var_color_order_list))
+
+df_tail_group %>%
+  dplyr::mutate(varrs = factor(varrs, levels = tail11var)) %>%
+  ggplot(., aes(x = Variable, y = .value)) + 
+  geom_smooth(formula = y~x, method = "loess") + 
+  facet_wrap2(~varrs, ncol = 4, scales = "free", strip = strip) +
+  theme_bw(base_size = 8)+
+  labs(title = "Accumulated local effects for tile", x = "Variable values") +
+  # scale_fill_manual(breaks = td_labels,values = td_colors) +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank(),
+        plot.title = element_text(hjust = 0.5,color = "black", size = title_size))
+```
+
+```{r}
+fname <- paste0(datadir,today, '_','ALE_11tailVars_lines_smooth.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in')
+
+fname <- paste0(datadir,today, '_','ALE_11tailVars_lines_smooth.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in')
+```
+
+##  3.8 shapeley value - individual point
+SAVED phi_df_1percent.csv  - NO NEED TO RE-RUN 
+```{r}
+# example ##############################################3
+        # predictor <- Predictor$new(rf_ev, 
+        #                            data = trane, 
+        #                            y = train_df2$elecViolence1,
+        #                            class = "vio")
+        # 
+        # rf_preds <- predict(rf_ev, 
+        #                     newdata = train_df2, 
+        #                     type = "prob")
+
+##########################################################3
+names(traindata_final_rena)
+head(traindata_final_rena)
+# write_csv(traindata_final_rena,paste0(datadir,'traindata_final_rena_SHAP.csv'))
+
+head(traindata_final_rena)
+X <- traindata_final_rena[which(names(traindata_final_rena) != "TD")]
+predictor <- Predictor$new(model,  # still the same model 
+                           data = X, 
+                           y = model$TD,
+                           class = "Tile",
+                           type = "prob")
+
+trane.2 <- X
+names(trane.2)
+trane.2$probs <- predictor$class
+
+shap_pred <- Predictor$new(model, data = trane.2, y = "probs", type = "prob", class = "Tile")
+
+# take a look at the predictor 
+angola <- Shapley$new(shap_pred,x.interest = trane.2[1,]) ## select the first row 
+
+ang_data <- angola$results
+ang_data <- ang_data[order(ang_data$phi, 
+                           decreasing = T),]
+ang_data$feature
+
+ang_data$feature <- factor(ang_data$feature, 
+                             levels = ang_data$feature)
+
+shapleyPlot <- ggplot(ang_data, aes(x = feature, y = phi)) + 
+  geom_col(fill = "cornflowerblue", 
+           alpha = .7, 
+           col = "blue") + 
+  theme_bw(base_size = 10) + 
+  coord_flip() + 
+  labs(y = "Variable", 
+       title = "a. Shapley value" ) +
+  #subtitle = "Actual prediction = 0.87; Average Prediction = 0.3"
+  #title = "Shapley value for all variables"
+  #y = "Shapley value"
+  theme(plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+        axis.title = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5))
+shapleyPlot
+
+    # shap_values = predict(model, X, predcontrib = TRUE, approxcontrib = F)
+    # shapeley = Shapley$new(shap_pred, x.interest = X[1,])
+    # shapeley$plot()
+
+# can also plot with the feature value 
+    # ggplot(ang_data, aes(x = feature.value, y = phi)) + 
+    #   geom_col(fill = "cornflowerblue", 
+    #            alpha = .7, 
+    #            col = "blue") + 
+    #   theme_bw(base_size = 10) + 
+    #   coord_flip() + 
+    #   labs(x = "Variable", 
+    #        y = "Shapley value",    #  subtitle = "Actual prediction = 0.87; Average Prediction = 0.3"
+    #        title = "Shapley value for all variables") +
+    #   theme(plot.title = element_text(hjust = 0.5,color = "black", size = title_size))
+```
+
+
+
+## 3.9 SHAP (mean of absolute shapley value)
+```{r, shapely loop}
+set.seed(12345)
+sample_proportion <- 0.01
+random_row <- sample(1:nrow(X), size = sample_proportion*nrow(X), replace = F) 
+
+# random_row <- sample(1:nrow(X), size = 100, replace = F) # size = 10
+# random_row <- sample(1:nrow(X), size = 200, replace = F) # size = 10
+
+phi_df <- data.frame()
+for (i in random_row) {
+  print(i)
+  shapley <- Shapley$new(predictor, x.interest = X[i,])
+  phi_i  <- shapley$results
+  phi_i$row_id <- i
+  phi_df <- rbind(phi_df, phi_i)
+}
+
+# write_csv(phi_df, paste0(datadir,"phi_df_1percent.csv"))
+
+# phi_df <- read_csv(paste0(datadir,"phi_df_1percent.csv"),show_col_types = FALSE)
+phi_df <- read_csv("C:/Users/luven/Desktop/Midwest_Diss_20230802/phi_df_1percent.csv",show_col_types = FALSE)
+
+phi_df_mean <- phi_df %>%
+  group_by(feature) %>%
+  dplyr::summarize(mean_abs_phi = mean(abs(phi))) %>%
+  dplyr::arrange(desc(mean_abs_phi))
+
+###############################  ONE color 
+  # shapleyPlot <- ggplot(phi_df_mean, aes(x = reorder(feature, mean_abs_phi),y = mean_abs_phi)) + 
+  #   geom_col(fill = "cornflowerblue", 
+  #            alpha = .7, 
+  #            col = "blue") +
+  #   theme_bw(base_size = 10) +
+  #   coord_flip() + 
+  #   labs(y = "Variable", 
+  #        title = "a. SHAP values" ) +
+  #   #subtitle = "Actual prediction = 0.87; Average Prediction = 0.3"
+  #   #title = "Shapley value for all variables"
+  #   #y = "Shapley value"
+  #   theme(plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+  #         axis.title = element_blank(),
+  #         panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5))
+  # shapleyPlot
+
+###############################  color by group 
+names(phi_df_mean)
+phi_df_mean$Bands <- phi_df_mean$feature
+phi_df_mean_group <- phi_df_mean %>%
+  dplyr::mutate(
+    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Landsat', ''),
+    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'MODIS', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'SMP.|SSM.|SUSM.'), 'SMAP', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'AET.'), 'TerraClimate', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Aridity.|Precip_'), 'GridMET', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class'), 'gSSURGO', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Slope_mean'), 'NED', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'HLR'), 'HLR', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Canal'), 'NHD', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Paw_|paw_|Clay_|Ksat_'), 'Polaris',group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Cropland'), 'CDL',group)) 
+  # dplyr::filter(Bands != 'Cropland')
+# check whether the variables was assigned to a correct group 
+# group = ifelse(str_detect(string = Bands, pattern = 'VH|VV'), 'SAR', group),
+
+
+
+shapleyPlot <- phi_df_mean_group %>%
+  dplyr::mutate(name = as.character(Bands)) %>%
+  # dplyr::mutate(names = fct_reorder(Bands,mean_abs_phi))   %>%
+  ggplot(aes(x = reorder(feature, mean_abs_phi), y = mean_abs_phi, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+  coord_flip() +
+  # ggtitle("a. SHAP values") +
+  labs(y = "Variable", x = "Bands") +
+  # labs(y = "Importance", x = "Variable") +
+  scale_fill_manual(values = gear.cols) +  
+  theme_bw(base_size = font_size)+
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+        plot.title = element_blank(),
+        # plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+        legend.position = c(0.75, 0.225),legend.title = element_blank(),
+        legend.text = element_text(color = "black", size = font_size),
+        axis.title = element_blank(),
+        axis.text = element_text(color = "black", size = font_size),
+        legend.background = element_rect(color = "black",linewidth = 0.5)) +
+   annotate("text", label = "(a)", x = 1, y = 0.01, hjust = 0, vjust = 0, size = 4)
+
+shapleyPlot
+```
+
+## 3.10 overall importance = SHAP + MDA + Gini
+```{r}
+head(phi_df_mean)
+
+phi_df_mean1 <- phi_df_mean  %>% 
+  dplyr::mutate(phi_abs = abs(mean_abs_phi)) %>%
+  dplyr::arrange(desc(phi_abs))
+
+## assign score to this metric 
+phi_df_mean1$phi_score <- c(nrow(phi_df_mean1):2,1)
+
+## bring the Gini MDA, assigne score as well 
+impor <- read_csv(paste0(datadir,'20240429_RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
+names(impor)
+
+impor_MDA <- impor[,c("Bands","MeanDecreaseAccuracy","group")]
+impor_MDA_df <- impor_MDA  %>% 
+  dplyr::mutate(MDA_abs = abs(MeanDecreaseAccuracy)) %>%
+  dplyr::arrange(desc(MDA_abs))
+
+## assign score to this metric 
+impor_MDA_df$MDA_score <- c(nrow(phi_df_mean1):2,1)
+
+impor_Gini <- impor[,c("Bands","MeanDecreaseGini","group")]
+impor_Gini_df <- impor_Gini  %>% 
+  dplyr::mutate(Gini_abs = abs(MeanDecreaseGini)) %>%
+  dplyr::arrange(desc(Gini_abs))
+## assign score to this metric 
+impor_Gini_df$Gini_score <- c(nrow(phi_df_mean1):2,1)
+
+
+# now combine these three variables 
+head(phi_df_mean1)
+head(impor_MDA_df)
+head(impor_Gini_df)
+
+phi_data_select <- phi_df_mean1[,c("feature","phi_score")]
+names(phi_data_select) <- c("Bands","phi_score")
+impor_MDA_select <- impor_MDA_df[,c("Bands","MDA_score","group")]
+impor_Gini_select <- impor_Gini_df[,c("Bands","Gini_score")]
+
+shapley_MDA <- merge(phi_data_select,impor_MDA_select,by = "Bands")
+shapley_MDA_Gini <- merge(shapley_MDA,impor_Gini_select,by = "Bands")
+
+head(shapley_MDA_Gini)
+str(shapley_MDA_Gini)
+shapley_MDA_Gini$Score <- shapley_MDA_Gini$phi_score + shapley_MDA_Gini$MDA_score + shapley_MDA_Gini$Gini_score
+head(shapley_MDA_Gini)
+str(shapley_MDA_Gini)
+str(shapley_MDA_Gini)
+names(shapley_MDA_Gini)
+
+# ScorePlot <- shapley_MDA_Gini %>%
+#   mutate(name = fct_reorder(Bands,MeanDecreaseAccuracy)) %>%  
+#   dplyr::mutate(name = as.character(Bands)) %>%  ## set the levels in order we want
+#   ggplot(aes(x = reorder(name,Score), y = Score, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+#   geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+#   coord_flip() +
+#   ggtitle("b. Overall Importance") +
+#   labs(y = "Score based on MDA, Gini and Shapley", x = "Bands") +
+#   # labs(y = "Importance", x = "Variable") +
+#   scale_fill_manual(values = td_colors) +  
+#   theme_bw(base_size = font_size)+
+#   theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+#         plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+#         legend.position = c(0.75, 0.225),legend.title = element_blank(),
+#         legend.text = element_text(color = "black", size = font_size),
+#         axis.title = element_blank(),
+#         axis.text = element_text(color = "black", size = font_size),
+#         legend.background = element_rect(color = "black",linewidth = 0.5)) 
+
+ScorePlot <- shapley_MDA_Gini %>%
+  dplyr::mutate(name = as.character(Bands)) %>%
+  dplyr::mutate(names = fct_reorder(name,Score))   %>%
+  ggplot(aes(x = names, y = Score, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+  coord_flip() +
+  # ggtitle("b. Overall Importance") +
+  labs(y = "Score based on MDA, Gini and Shapley", x = "Bands") +
+  # labs(y = "Importance", x = "Variable") +
+  scale_fill_manual(values = gear.cols) +  
+  theme_bw(base_size = font_size)+
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+        plot.title = element_blank(),
+        legend.position = c(0.75, 0.225),legend.title = element_blank(),
+        legend.text = element_text(color = "black", size = font_size),
+        axis.title = element_blank(),
+        axis.text = element_text(color = "black", size = font_size),
+        legend.background = element_rect(color = "black",linewidth = 0.5)) +
+  annotate("text", label = "(b)", x = 1, y = 12.5, hjust = 0, vjust = 0, size = 4)
+
+
+ScorePlot
+shapleyPlot
+figure <- ggarrange(shapleyPlot,ScorePlot)
+figure
+```
+
+
+```{r}
+fname <- paste0(datadir,today, '_','Overall_Importance_selectVars.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7, units = 'in') #height = 6,
+
+fname <- paste0(datadir,today, '_','Overall_Importance_selectVars.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 5, units = 'in')
+```
+
+
+## 4 comparison 
+## 4.11.1 Only use soil drainage class and slope for classification (300, 6)
+```{r}
+# Number of variables randomly sampled as candidates at each split. Note that the default values are different for classification (sqrt(p) where p is number of variables in x) and regression (p/3)
+names(traindata_final_rena)
+traindata_select_2 <- traindata_final_rena[,c("TD","Soil_drain_class","Slope_mean")]
+class(traindata_select_2$TD)
+unique(traindata_select_2$TD)
+traindata_select_2$TD <- as.factor(traindata_select_2$TD)
+
+
+rf_train_2 <- randomForest(TD ~., data = traindata_select_2, # If you want to do classification, you should convert TD to a factor. Otherwise, the outcome is being treated as a continuous variable.
+                       mtry=2, # change to the best mtry
+                       ntree=500,
+                       importance=TRUE,
+                       proximity=FALSE,
+                       na.action = na.roughfix)  # 
+# na.roughfix is used to impute missing values by the random forest model.There are two ways in which it works.If the data is numeric,na’s are replaced by median values and if the variable is categorical,the most frequently occurring value is taken.
+
+# https://stats.stackexchange.com/questions/349122/what-is-the-difference-between-rfimportance-and-importancerf-in-the-package-r
+# What is the difference between rf$importance and importance(rf) in the package randomForest in R?
+# By default, importance() scales the results by the standard error of the measure (see the help page). If you specify importance with the parameter scale=FALSE, you will get identical results as from my_forest$importance
+
+rf_train_2
+treesize(rf_train_2, terminal=TRUE)
+      # importance2 <- importance(rf_train, type = 2) #  	2=mean decrease in node impurity
+      # head(importance2)
+      # # either 1 or 2, specifying the type of importance measure (1=mean decrease in accuracy)
+      # importance1 <- importance(rf_train, type = 1) # 
+      # head(importance1)
+      # 
+importanceF <- importance(rf_train_2, type = 1, scale = FALSE) # 
+head(importanceF)
+
+importance <- importance(rf_train_2,scale = TRUE)
+head(importance)
+
+      # importance <- rf_train$importance
+      # head(importance)
+      # rownames(importance)   
+```
+
+## 4.11.2  confusion matrix and visualization 
+```{r}
+# Use the confusionMatrix Function to Create a Confusion Matrix in R
+p2 <- predict(rf_train_2, testdata_final_rena)
+cf <- confusionMatrix(data = p2, as.factor(testdata_select$TD), mode = "everything",positive = "Tile")
+cf
+#  confusionMatrix(data = p2, as.factor(testdata$TD))
+```
+# save object 
+```{r}
+save(phi_df, shapley_MDA_Gini, impt_frame, model, rf_model, file = paste0(datadir, "mydata.RData")) # model is the final model not initial model 
+# load(paste0(datadir, "mydata.RData"))
+```
+

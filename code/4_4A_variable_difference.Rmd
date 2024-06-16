@@ -1,0 +1,541 @@
+---
+title: "var_diff+20240401"
+author: "Luwen Wan"
+date: "2024-04-01"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. get data ready 
+```{r}
+remove(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(tidyr)  # gather
+library(ggpubr) # for stat_compare_means
+library(MASS) # FOR ROB
+library(readr)
+library(ggh4x)
+#  # https://www.r-bloggers.com/2017/06/add-p-values-and-significance-levels-to-ggplots/
+
+today <- format(Sys.time(), "%Y%m%d"); print(today)
+datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
+set.seed(1234)
+
+knitr::opts_knit$set(root.dir = datadir)
+# these csv files are exported from GEE
+tile_train2 <- read_csv(paste0(datadir,"Midwest_tile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+nontile_train2 <- read_csv(paste0(datadir,"Midwest_nontile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+test2 <- read_csv(paste0(datadir,"/Midwest_test_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+
+names(tile_train2)
+names(nontile_train2)
+names(test2)
+
+data1 <- rbind(tile_train2, nontile_train2,test2)
+str(data1)
+dim(data1)
+
+# for boxplot, variable difference 
+td_levels <- c("Tile", 'Non-tile')
+td_labels <- c("Tile", 'Non-tile')
+tdcolors <- c("royalblue1", "skyblue1")
+
+# for importance metrix 
+td_levels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
+td_labels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
+td_colors <- c("#1f78b4","#a6cee3","#8dd3c7","#b2df8a","#fb9a99","#ff7f00",'#fdbf6f',"#cab2d6","#807dba","#33a02c","#ffff99")  ## "#8dd3c7",
+
+```
+
+# 2. TOP 20 variables 
+```{r}
+names(data1)
+data_select <- data1[, !(colnames(data1) %in% c("system:index", ".geo","random", "Num"))]
+names(data_select)
+
+# change 1 and 2 in TD column to tiled and non tiled
+data_select1 <- within(data_select, TD[TD == 1] <- 'Tile')
+data_select2 <- within(data_select1, TD[TD == 0] <- 'Non-tile')
+
+# check how many tile points and how many non tiled points
+data_select2_nontiled <- data_select2 %>%
+  dplyr::filter(TD  == "Non-tile") # 19964
+data_select2_tiled <- data_select2 %>%
+  dplyr::filter(TD  == "Tile") # 12718
+data_select2$TD <- as.factor(data_select2$TD)
+unique(data_select2$TD)
+names(data_select2)
+
+# select data only for top 20 
+# change name first 
+data_select3 <- data_select2 %>% 
+        rename("Canal_ditch_dist" = "CanalDitchD",
+               "HLR" = "HLR",
+               "NDVI_grow_max" = "NDVI_Grow_max",
+               "NDWI_spr_max" = "NDWI_Spring_max",
+               "NDWI_summ_max" = "NDWI_Summer_max",
+               "SMP_median_summ" = "SMP_median_summ",
+               "SUSM_median_spr" = "SUSM_median_spr",
+               "SUSM_range_spr" = "SUSM_range_spr",
+               "TD" = "TD",
+               "Tr_swir1_grow_max" = "Tr_SWIR1_Grow_max",
+               "Tr_swir2_spr_max" =  "Tr_SWIR2_Spring_max",
+               "Tr_swir2_summ_max" = "Tr_SWIR2_Summer_max",
+               "AET_grow" =  "aet_grow_terra",
+               "Aridity_preGrow_3yr" = "aridity_preGrow_3yr",
+               "Aridity_spr" = "aridity_spr",
+               "Clay_mean_5cm" = "clay_mean_0_5",
+               "Cropland" = "cropland",
+               "DayLST_median_grow" = "dayLST_median_grow",
+               "DayLST_median_spr" = "dayLST_median_spr",
+               "DayLST_median_summ" = "dayLST_median_summ",
+               "DayLST_range_grow" = "dayLST_range_grow",
+               "DayLST_range_spr" = "dayLST_range_spr",
+               "DayLST_range_summ" = "dayLST_range_summ",
+               "DiffLST_median_grow" = "diffLST_median_grow",
+               "DiffLST_median_spr" = "diffLST_median_spr",
+               "Ksat_mean_5cm" = "ksat_mean_0_5",
+               "NightLST_max_spr" = "nightLST_max_spr",
+               "NightLST_max_summ" = "nightLST_max_summ",
+               "Paw_mean_5cm" = "paw_mean_0_5",
+               "Precip_grow" = "pr_grow",
+               "Slope_mean" = "slope_mean",
+               "Soil_drain_class" = "soilDrainClass")
+```
+
+```{r}
+MDA <- read_csv(paste0(datadir,"/20240429_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
+names(MDA)
+
+top20 <- dplyr::slice(MDA %>% 
+  arrange(desc(MeanDecreaseAccuracy)), 1:20)
+
+top20$Bands
+
+top20Var <- c("AET_grow","NightLST_max_summ","Aridity_spr","SMP_median_summ","SUSM_median_spr","DayLST_range_grow",
+              "Soil_drain_class","Precip_grow","Slope_mean","Clay_mean_5cm","SUSM_range_spr","Canal_ditch_dist",
+              "DayLST_median_grow","HLR","Aridity_preGrow_3yr","DayLST_range_spr","NightLST_max_spr","Ksat_mean_5cm",
+               "DayLST_median_spr","DayLST_range_summ")
+length(top20Var)
+unique(top20$group)
+names(top20)
+top20$Bands
+
+
+data_select4 <- data_select3[, (colnames(data_select3) %in% c(top20$Bands,"TD"))]
+names(data_select4)
+
+## convert to long format
+gathercols <- c("AET_grow","NightLST_max_summ","Aridity_spr","SMP_median_summ","SUSM_median_spr","DayLST_range_grow",
+              "Soil_drain_class","Precip_grow","Slope_mean","Clay_mean_5cm","SUSM_range_spr","Canal_ditch_dist",
+              "DayLST_median_grow","HLR","Aridity_preGrow_3yr","DayLST_range_spr","NightLST_max_spr","Ksat_mean_5cm",
+               "DayLST_median_spr","DayLST_range_summ")
+
+data_select2_long <- gather(data_select4, Bands, bands,all_of(gathercols), factor_key=TRUE)
+unique(data_select2_long$Bands)
+
+names(data_select2_long)
+
+# make it by the order of MDA 
+MDAorder <- (top20[order(top20$MeanDecreaseAccuracy, decreasing = TRUE),])$Bands
+MDAorder
+
+# add the group 
+names(data_select2_long)
+names(MDA)
+MDA_group <- MDA[,c("Bands","group")]
+
+data_select2_long_merge <- merge(x = data_select2_long, y = MDA_group, by = "Bands", all.x = T)
+data_select2_long_merge$Bands <- factor(data_select2_long_merge$Bands, levels = MDAorder) # to use the right order 
+
+    # one strip color 
+    # ggplot(data = data_select2_long_merge, aes(x=TD, y=bands,fill = TD)) + 
+    #   scale_fill_manual(values = tdcolors)+
+    #   geom_violin() +   # outlier.colour = "red", outlier.shape = 1; outlier.shape = NA
+    #   facet_wrap(~Bands, scales = 'free_y', nrow = 5) +
+    #   #stat_summary(fun = median, geom="point", shape=20, size=4, color="blue", fill="red") + # show mean 
+    #   theme_bw(base_size = 8) + 
+    #   theme(legend.title = element_blank(),axis.title.x = element_blank(),
+    #         axis.title.y = element_blank(),legend.position = "none") +
+    #   # theme(legend.position = "none",
+    #   #       strip.background = element_rect(colour= "black",
+    #   #                                       fill = fillColor)) +
+    #   geom_boxplot(color = "black", width = 0.1, size = 0.3, outlier.shape = NA)  # ,outlier.color = 'red', outlier.shape = 23
+    # 
+    #   # # no need significance since all of them are ****
+    #   # stat_compare_means(aes(label = ..p.signif..),size = 8, label.x.npc = 0.5, label.y.npc = 0.65,
+    #   #                    method = "wilcox.test",hide.ns = FALSE)
+    #   # stat_summary(fun = mean, geom="point", shape=0, color = "blue", size=4) 
+
+## color the strip 
+gear.cols.df <- data.frame(td_labels = td_labels, td_colors = td_colors)
+names(data_select2_long_merge)
+names(gear.cols.df)
+
+# change strip color 
+df_top_group <- merge(data_select2_long_merge, gear.cols.df,by.x = "group", by.y = "td_labels", all.x = TRUE) 
+head(df_top_group)
+unique(df_top_group$group)
+
+var_color_order <- df_top_group %>%
+  dplyr::distinct(group, Bands, td_colors) %>%
+  dplyr::mutate(Bands = factor(Bands, levels = MDAorder),
+                ## convert a factor to integer so that we can order the color 
+                id = as.integer(Bands)) %>%
+  arrange(id)
+
+var_color_order_list <- var_color_order$td_colors
+strip <- strip_themed(background_x = elem_list_rect(fill = var_color_order_list))
+
+# When you use scale_fill_... for the boxplot fill, it creates a color scheme that links the 'TD' column values to specific colors. This often overrides any colors you've set manually for the strips.
+
+# Ensure you have enough colors for the unique values in your 'TD' column 
+td_shapes <- c("circle", "square")
+str(df_top_group)
+df_top_group %>%
+  dplyr::mutate(Bands = factor(Bands, levels = top20Var)) %>%
+  ggplot(.,aes(x = TD, y=bands,fill = TD)) +  # 
+  scale_fill_manual(values = tdcolors) +
+  geom_violin() +
+  facet_wrap2(~ Bands, ncol = 4, scales = "free",strip = strip) +
+  scale_color_manual(values = var_color_order_list, guide = "none") +
+  theme_bw(base_size = 8) +
+  theme(legend.title = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_blank(),legend.position = "none") +  # strip.background = element_rect(fill = var_color_order_list)
+  geom_boxplot(color = "black", width = 0.1, size = 0.3, outlier.shape = NA) 
+   # # no need significance since all of them are ****
+  stat_compare_means(aes(label = ..p.signif..),size = 8, label.x.npc = 0.5, label.y.npc = 0.65,
+                     method = "wilcox.test",hide.ns = FALSE)
+```
+
+```{r}
+fname <- paste0(datadir,today, '_','Fig4_Variable_Difference_20Vars.png'); fname
+ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
+
+fname <- paste0(datadir,'Fig4_Variable_Difference_20Vars.pdf'); fname
+ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
+
+```
+
+# 3. remaining 11 variables 
+```{r}
+tail11 <- dplyr::slice(MDA %>% 
+  arrange(desc(MeanDecreaseAccuracy)), 21:31)
+
+tail11$Bands
+
+tail11Var <- c("DayLST_median_summ","DiffLST_median_spr","DiffLST_median_grow","Paw_mean_5cm","NDWI_spr_max","Tr_swir2_spr_max",
+                "NDWI_summ_max","NDVI_grow_max","Tr_swir2_summ_max","Tr_swir1_grow_max","Cropland")
+length(tail11Var)
+
+unique(tail11$group)
+names(tail11)
+tail11$Bands
+
+# select data only for tail 11 
+names(data_select3)
+data_select_tail <- data_select3[, (colnames(data_select3) %in% c(tail11$Bands,"TD"))]
+names(data_select_tail)
+
+## convert to long format
+data_select_tail_long <- gather(data_select_tail, Bands, bands,all_of(tail11Var), factor_key=TRUE)
+unique(data_select_tail_long$Bands)
+
+
+names(data_select_tail_long)
+# make it by the order of MDA 
+MDAorder_tail <- (tail11[order(tail11$MeanDecreaseAccuracy, decreasing = TRUE),])$Bands
+MDAorder_tail
+
+# add the group 
+names(data_select_tail_long)
+unique(data_select_tail_long$Bands)
+names(MDAorder_tail)
+MDA_group <- MDA[,c("Bands","group")]
+
+# merge to get 'group' column 
+data_select_tail_long_merge <- merge(x = data_select_tail_long, y = MDA_group, by = "Bands", all.x = TRUE)
+head(data_select_tail_long_merge)
+unique(data_select_tail_long_merge$Bands)
+data_select_tail_long_merge$Bands <- factor(data_select_tail_long_merge$Bands, levels = MDAorder_tail) # to use the right order 
+
+## color the strip 
+gear.cols.df <- data.frame(td_labels = td_labels, td_colors = td_colors)
+head(data_select_tail_long_merge)
+head(gear.cols.df)
+
+# change strip color 
+df_top_group <- merge(data_select_tail_long_merge, gear.cols.df, by.x = "group", by.y = "td_labels", all.x = TRUE) 
+head(df_top_group)
+unique(df_top_group$group)
+
+var_color_order <- df_top_group %>%
+  dplyr::distinct(group, Bands, td_colors) %>%
+  dplyr::mutate(Bands = factor(Bands, levels = MDAorder_tail),
+                ## convert a factor to integer so that we can order the color 
+                id = as.integer(Bands)) %>%
+  arrange(id)
+
+var_color_order_list <- var_color_order$td_colors
+strip <- strip_themed(background_x = elem_list_rect(fill = var_color_order_list))
+
+# When you use scale_fill_... for the boxplot fill, it creates a color scheme that links the 'TD' column values to specific colors. This often overrides any colors you've set manually for the strips.
+
+# Ensure you have enough colors for the unique values in your 'TD' column 
+str(df_top_group)
+df_top_group %>%
+  dplyr::mutate(Bands = factor(Bands, levels = tail11Var)) %>%
+  ggplot(.,aes(x = TD, y=bands,fill = TD)) +  # 
+  scale_fill_manual(values = tdcolors) +
+  geom_violin() +
+  facet_wrap2(~ Bands, ncol = 4, scales = "free",strip = strip) +
+  scale_color_manual(values = var_color_order_list, guide = "none") +
+  theme_bw(base_size = 8) +
+  theme(legend.title = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_blank(),legend.position = "none") +  # strip.background = element_rect(fill = var_color_order_list)
+  geom_boxplot(color = "black", width = 0.1, size = 0.3, outlier.shape = NA) +
+   # # no need significance since all of them are ****
+  stat_compare_means(aes(label = ..p.signif..),size = 4, label.x.npc = 0.4, label.y.npc = 0.75,
+                     method = "wilcox.test",hide.ns = FALSE)
+```
+
+
+```{r}
+fname <- paste0(datadir,today, '_','FigA4_Variable_Difference_11Vars.png'); fname
+ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
+
+fname <- paste0(datadir, 'FigA4_Variable_Difference_11Vars.pdf'); fname
+ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
+```
+
+
+# 4. For writing text description 
+```{r}
+head(data_select2)
+names(data_select2)
+unique(data_select2$TD)
+data_select2_nontiled <- data_select2 %>%
+  dplyr::filter(TD == "Non-tile")
+
+data_select2_tiled <- data_select2 %>%
+  dplyr::filter(TD == "Tile")
+
+#AET 
+hist(data_select2_nontiled$aet_grow_terra)
+hist(data_select2_tiled$aet_grow_terra)
+median(data_select2_nontiled$aet_grow_terra)
+min(data_select2_nontiled$aet_grow_terra)
+max(data_select2_nontiled$aet_grow_terra)
+
+median(data_select2_tiled$aet_grow_terra)
+min(data_select2_tiled$aet_grow_terra)
+max(data_select2_tiled$aet_grow_terra)
+
+# aridity_spr
+hist(data_select2_nontiled$aridity_spr)
+hist(data_select2_tiled$aridity_spr)
+
+median(data_select2_tiled$aridity_spr)
+median(data_select2_tiled$aridity_spr)
+median(data_select2_tiled$aridity_spr)
+
+median(data_select2_nontiled$aridity_spr)
+median(data_select2_nontiled$aridity_spr)
+median(data_select2_nontiled$aridity_spr)
+
+# aridity_spr
+hist(data_select2_nontiled$pr_grow)
+hist(data_select2_tiled$pr_grow)
+median(data_select2_nontiled$pr_grow)
+median(data_select2_tiled$pr_grow)
+
+
+hist(data_select2_nontiled$aridity_preGrow_3yr)
+hist(data_select2_tiled$aridity_preGrow_3yr)
+median(data_select2_nontiled$aridity_preGrow_3yr)
+median(data_select2_tiled$aridity_preGrow_3yr)
+
+# LST   
+hist(data_select2_nontiled$nightLST_max_summ)
+hist(data_select2_tiled$nightLST_max_summ)
+median(data_select2_nontiled$nightLST_max_summ)
+median(data_select2_tiled$nightLST_max_summ)
+
+hist(data_select2_nontiled$nightLST_max_spr)
+hist(data_select2_tiled$nightLST_max_spr)
+median(data_select2_nontiled$nightLST_max_spr)
+median(data_select2_tiled$nightLST_max_spr)
+
+# 
+hist(data_select2_nontiled$dayLST_range_grow)
+hist(data_select2_tiled$dayLST_range_grow)
+median(data_select2_nontiled$dayLST_range_grow)
+median(data_select2_tiled$dayLST_range_grow)
+
+hist(data_select2_nontiled$dayLST_range_spr)
+hist(data_select2_tiled$dayLST_range_spr)
+median(data_select2_nontiled$dayLST_range_spr)
+median(data_select2_tiled$dayLST_range_spr)
+
+
+hist(data_select2_nontiled$dayLST_range_summ)
+hist(data_select2_tiled$dayLST_range_summ)
+median(data_select2_nontiled$dayLST_range_summ)
+median(data_select2_tiled$dayLST_range_summ)
+
+# 
+hist(data_select2_nontiled$dayLST_median_spr)
+hist(data_select2_tiled$dayLST_median_spr)
+median(data_select2_nontiled$dayLST_median_spr)
+median(data_select2_tiled$dayLST_median_spr)
+
+hist(data_select2_nontiled$dayLST_median_grow)
+hist(data_select2_tiled$dayLST_median_grow)
+median(data_select2_nontiled$dayLST_median_grow)
+median(data_select2_tiled$dayLST_median_grow)
+
+
+# SMAP 
+hist(data_select2_nontiled$SMP_median_summ)
+hist(data_select2_tiled$SMP_median_summ)
+median(data_select2_nontiled$SMP_median_summ)
+median(data_select2_tiled$SMP_median_summ)
+
+# soil drainage 
+hist(data_select2_nontiled$soilDrainClass)
+unique(data_select2_nontiled$soilDrainClass)
+
+hist(data_select2_tiled$soilDrainClass)
+unique(data_select2_tiled$soilDrainClass)
+
+
+
+names(data_select2_nontiled)
+data_select2_nontiled2 <- data_select2_nontiled %>%
+  filter(soilDrainClass == 2)
+nrow(data_select2_nontiled2)/nrow(data_select2_nontiled)
+
+data_select2_tiled5 <- data_select2_tiled %>%
+  filter(soilDrainClass == 5)
+nrow(data_select2_tiled5)/nrow(data_select2_tiled)
+
+hist(data_select2_tiled$soilDrainClass)
+data_select2_tiled4 <- data_select2_tiled %>%
+  filter(soilDrainClass == 4)
+nrow(data_select2_tiled4)/nrow(data_select2_tiled)
+
+data_select2_tiled2 <- data_select2_tiled %>%
+  filter(soilDrainClass == 2)
+nrow(data_select2_tiled2)/nrow(data_select2_tiled)
+# it seems not true that SMP_median_summ in tile area is higher, so we compare them by soil drainage class
+median(data_select2_tiled2$SMP_median_summ) # 0.3601899
+median(data_select2_nontiled2$SMP_median_summ) #  0.4608928
+
+hist(data_select2_nontiled$SUSM_range_spr)
+hist(data_select2_tiled$SUSM_range_spr)
+median(data_select2_nontiled$SUSM_range_spr)
+median(data_select2_tiled$SUSM_range_spr)
+
+hist(data_select2_nontiled$SUSM_max_spr)
+hist(data_select2_tiled$SUSM_max_spr)
+median(data_select2_nontiled$SUSM_max_spr)
+median(data_select2_tiled$SUSM_max_spr)
+
+# slope 
+hist(data_select2$slope_mean)
+hist(data_select2_nontiled$slope_mean)
+hist(data_select2_tiled$slope_mean)
+median(data_select2_nontiled$slope_mean); # 1.292548, < 6
+min(data_select2_nontiled$slope_mean); # 1.292548, < 6
+max(data_select2_nontiled$slope_mean); # 1.292548, < 6
+
+median(data_select2_tiled$slope_mean)
+min(data_select2_tiled$slope_mean)
+max(data_select2_tiled$slope_mean)
+
+# HLR 
+hist(data_select2_nontiled$HLR)
+hist(data_select2_tiled$HLR)
+
+# slope 
+hist(data_select2_nontiled$slope_mean)
+hist(data_select2_tiled$slope_mean)
+median(data_select2_tiled$slope_mean)
+median(data_select2_nontiled$slope_mean)
+
+# distance  
+hist(data_select2_nontiled$CanalDitchD)
+hist(data_select2_tiled$CanalDitchD)
+median(data_select2_nontiled$CanalDitchD)
+median(data_select2_tiled$CanalDitchD)
+
+# ksat  
+hist(data_select2_nontiled$ksat_mean_0_5)
+hist(data_select2_tiled$ksat_mean_0_5)
+median(data_select2_nontiled$ksat_mean_0_5)
+median(data_select2_tiled$ksat_mean_0_5)
+
+# clay   
+hist(data_select2_nontiled$clay_mean_0_5)
+hist(data_select2_tiled$clay_mean_0_5)
+median(data_select2_nontiled$clay_mean_0_5)
+median(data_select2_tiled$clay_mean_0_5)
+```
+
+
+# 5. make a table summarizing the median, min and max for selected 31 variables
+```{r}
+names(data_select3)
+top20Var
+tail11Var
+
+# keep 31 variables 
+data_filtered <- data_select3[, colnames(data_select3) %in% c(top20Var, tail11Var,"TD")]
+
+# Group by 'TD' and calculate median, min, and max for each variable
+results <- data_filtered %>%
+  group_by(TD) %>%
+  summarize(
+    across(
+      .cols = where(is.numeric),  # Apply the functions to all numeric columns
+      .fns = list(
+        median = median,
+        min = min,
+        max = max
+      ),
+      .names = "{.col}_{.fn}"  # This names the columns according to the variable and the function
+    ),
+    .groups = 'drop'  # Drop the grouping after summarizing
+  )
+
+print(results)
+
+# Convert from wide to long format
+long_results <- results %>%
+  pivot_longer(
+    cols = -TD,  # Assuming 'TD' is your grouping variable
+    names_to = c("Variable", ".value"),
+    names_pattern = "(.*)_([^_]*)$"  # Splits into variable name and statistic type
+  )
+
+# Arrange and modify to create a new formatted column
+formatted_results <- long_results %>%
+  group_by(Variable) %>%
+  summarize(
+    Group1 = sprintf("%.2f (%.1f, %.2f)", median[1], min[1], max[1]),  # Format for the first group
+    Group2 = sprintf("%.2f (%.1f, %.2f)", median[2], min[2], max[2]),  # Format for the second group
+    .groups = 'drop'
+  )
+
+# change table column name 
+names(formatted_results) <- c("Variable","Median (min,max) for non tile", "Median (min,max) for tile")
+write_csv(formatted_results,paste0(datadir,"variable_statistics_median_min_max.csv"))
+```
+

@@ -1,0 +1,140 @@
+---
+title: "2_ic2csv_monthlymean_landsat_composite_lines"
+author: "Luwen Wan"
+date: "2024-06-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(reshape) # for melt()
+require(purrr)  # for map(), reduce()
+datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/2017_Midwest_ic2csv_20230329"
+setwd(datadir)
+files <- list.files(pattern = "\\.csv$")
+files
+
+```
+
+```{r}
+## plot settings --------------------------------------------------------------------
+font       <- 'sans'     ## sans,Arial; # serif, Times New Roman
+# https://cran.r-project.org/web/packages/svglite/vignettes/fonts.html
+font_size  <- 8        ##  Nature Sustainability: max = 7; min = 5
+axis_font_size <- 10
+font_color <- "black"
+
+# resources ---------------------------------------------------------------
+# https://stackoverflow.com/questions/38225941/add-separate-shaded-regions-around-multiple-lines-in-ggplot2-object
+# https://stackoverflow.com/questions/48698113/geom-ribbon-error-discrete-value-supplied-to-continuous-scale-ggplot2
+# http://www.sthda.com/english/wiki/ggplot2-line-types-how-to-change-line-types-of-a-graph-in-r-software
+
+```
+
+```{r}
+Jan <- read_csv(paste0(datadir,"/2017_AllSample_1_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Feb <- read_csv(paste0(datadir,"/2017_AllSample_2_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Mar <- read_csv(paste0(datadir,"/2017_AllSample_3_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+April <- read_csv(paste0(datadir,"/2017_AllSample_4_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+May <- read_csv(paste0(datadir,"/2017_AllSample_5_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+June <- read_csv(paste0(datadir,"/2017_AllSample_6_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+July <- read_csv(paste0(datadir,"/2017_AllSample_7_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Aug <- read_csv(paste0(datadir,"/2017_AllSample_8_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Sep <- read_csv(paste0(datadir,"/2017_AllSample_9_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Oct <- read_csv(paste0(datadir,"/2017_AllSample_10_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Nov <- read_csv(paste0(datadir,"/2017_AllSample_11_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+Dec <- read_csv(paste0(datadir,"/2017_AllSample_11_Landsat2Point_20230329.csv"),show_col_types = FALSE)
+
+Jan$month <- 1
+Feb$month <- 2
+Mar$month <- 3
+April$month <- 4
+May$month <- 5
+June$month <- 6
+July$month <- 7
+Aug$month <- 8
+Sep$month <- 9
+Oct$month <- 10
+Nov$month <- 11
+Dec$month <- 12
+
+
+Data <- rbind(Jan,Feb,Mar,April,May,June,July,Aug,Sep,Oct,Nov,Dec)
+names(Data)
+Data_select <- Data[,c("NDVI_monthlyMax","NDWI_monthlyMax",
+                       "Num","TD","month")]
+
+```
+
+```{r}
+# 1.2. get monhtly mean ----------------------------------------------------------------
+# Data_select_tile <- Data_select %>%
+#   filter(TD == 2)
+Data_mean <- Data_select %>% 
+  group_by(month,TD) %>%
+  summarise(mean_maxNDVI = mean(NDVI_monthlyMax),
+            mean_maxNDWI = mean(NDWI_monthlyMax))
+# Data_mean_long <- gather(Data_mean, index, value, meanEVI:meanTr_SWIR2, factor_key=TRUE)
+
+# 1.3. get first quantile ----------------------------------------------------------------
+Data_quantile1 <- Data_select %>% 
+  group_by(month,TD) %>%
+  summarise(quantile1NDVI = quantile(NDVI_monthlyMax,0.25),
+            quantile1NDWI = quantile(NDWI_monthlyMax,0.25))
+
+# 1.4. get first quantile ----------------------------------------------------------------
+Data_quantile3 <- Data_select %>% 
+  group_by(month,TD) %>%
+  summarise(quantile3NDVI = quantile(NDVI_monthlyMax,0.75),
+            quantile3NDWI = quantile(NDWI_monthlyMax,0.75))
+
+# 1.5. merge all data  --------------------------------
+merge <- merge(Data_mean, Data_quantile1) %>%
+  merge(Data_quantile3)
+names(merge)
+
+# check the GEE script - "ic2csv_landsat_timeseries_mean_allMonths_20220613"
+# contains the ground truth data, tile is 1 and non-tile is 2 
+merge$TD[merge$TD == 1] <- "Tile"
+merge$TD[merge$TD == 0] <- "nonTile"
+
+names(merge)
+meanMerge_long <- gather(merge, Index, value, mean_maxNDVI:mean_maxNDWI, factor_key=TRUE)
+```
+
+```{r}
+
+unique(meanMerge_long$TD)
+str(meanMerge_long$TD)
+
+meanMerge_long$month <- as.factor(meanMerge_long$month)
+ggplot(meanMerge_long, aes(x = month, y = value, group = interaction(TD, Index), 
+                                  color = Index, linetype = TD)) +
+  geom_line(linewidth = 1) + 
+  geom_point() +
+  scale_linetype_manual(values=c("dotted", "solid"))+
+  # scale_color_manual(values=c('#33a02c','#beaed4','#fdc086','#386cb0'))+  # give you the order of each variable 
+  scale_color_manual(labels = c("mean_maxNDVI","mean_maxNDWI"), values=c('#1a9850','#2166ac'))+
+  theme_bw(base_size = 12) +
+  labs(y = "Mean of monthly maximum NDVI&NDWI \n across all grounf truth points", x = "Month") +
+  theme(legend.position = c(0.27, 0.8)) +  # 
+  theme(text= element_text(family = font, size = font_size, color = font_color),
+        axis.title = element_text(family = font, size = axis_font_size, colour = font_color)) +
+  theme(axis.title.x = element_text(hjust = 0.5), axis.title.y = element_text(hjust = 0.5),
+        plot.title = element_blank(),legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(colour = "black",fill="white")) # legend.key.size = unit(0.5, "cm")
+
+ggsave(filename = paste0(datadir,"/maxLandsat_mean_allSamples_allMonth.png"),
+       plot = last_plot(), dpi = 600, width = 7, height = 5, units = 'in')
+ggsave(filename = paste0(datadir,"/maxLandsat_mean_allSamples_allMonth.pdf"),
+       plot = last_plot(), dpi = 600, width = 7, height = 5, units = 'in')
+```
+

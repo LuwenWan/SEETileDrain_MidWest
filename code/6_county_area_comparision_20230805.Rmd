@@ -1,0 +1,543 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+remove(list = ls())
+# library(corrmorant)
+# load packages
+library(tidyverse)
+library(plyr)
+library(dplyr)  # need to load plyr before dplyr 
+library(rlist)
+library(lubridate)
+library(cowplot)
+library(ggplot2)
+library(ggpubr)
+library(ggpmisc) # stat_poly_eq 
+library(ggrepel)
+library(grid)
+library(Metrics)  # for rmse 
+library(rgdal)
+library(sf)
+library(lintr)
+library(readr)
+library(ggplot2)
+library(ggpmisc)
+
+today <- format(Sys.time(), "%Y%m%d"); print(today)
+setwd("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802")
+tileDir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
+
+```
+
+
+```{r}
+# bring counties that I defined in my study region - 812 counties 
+my_county <- st_read("S:/Users/luwen/Tile_Mapping_States/14statesGIS/States14_county_tile_ag_aland_percent_2017_counties_select.shp")
+names(my_county)
+quantile(my_county$alnd_pr,na.rm = T)
+
+state <- st_read("S:/Users/luwen/Tile_Mapping_States/14statesGIS/Tile_Bdry_NoGL_14states.shp")
+names(state)
+head(state)
+
+# # get the land area for each county 
+# counties_aland <- st_read("S:/Users/luwen/Tile_Mapping_States/tiger/12states/12states_counties_noGL.shp")
+# names(counties_aland)
+# counties_aland <- as.data.frame(counties_aland)
+# counties_aland <- counties_aland[,c("GEOID","ALAND","AWATER")] # dataframe then select, otherwise it still has geometries
+# my_counties <- merge(x = my_county, y = counties_aland, by = "GEOID", all.x = T)
+# head(my_counties)
+```
+
+
+```{r}
+# read the area from classified map -------------
+data <- read_csv(paste0(tileDir,"Midwest_class_area_by_county_notnull_20230804.csv"),show_col_types = FALSE)
+names(data)
+data_classified <- data[,c("0","1","GEOID" )]
+colnames(data_classified)[which(names(data_classified) == "0")] <- "classified_NonTile"
+colnames(data_classified)[which(names(data_classified) == "1")] <- "classified_Tile"
+
+# only left the counties in my study area 
+data_classified_final <- data_classified[data_classified$GEOID %in% my_county$GEOID,]
+
+data_classified_NA <- my_county %>%
+  dplyr::filter(!my_county$GEOID %in% data_classified$GEOID)
+head(data_classified_NA)
+median(data_classified_NA$tile_m2,na.rm = T)
+median(data_classified_NA$t_lnd_p,na.rm = T)
+median(data_classified_NA$t_ag_pr,na.rm = T)
+
+# data_classified_NA <- data_classified_final %>%
+#   dplyr::filter(is.na(classified_Tile))  
+
+# conver units cause the export from GEE is km2 
+data_classified_final$classified_NonTile_m2 <- data_classified_final$classified_NonTile * 1000000
+data_classified_final$classified_Tile_m2 <- data_classified_final$classified_Tile * 1000000
+
+names(data_classified_final)
+data_classified_final <- data_classified_final[,c("GEOID","classified_Tile_m2","classified_NonTile_m2")]
+```
+
+
+```{r}
+# test the unit 
+  # my_county_geo <- my_county %>%
+  #   filter(GEOID == 17001)
+  # head(my_county_geo)
+  # Aland: 2214996383 m2 
+  # AWATER : 41760291  m2 
+  # 
+  # 
+  # data_classified_geo <- data_classified_final %>%
+  #    filter(GEOID == 17001)
+  # 
+  # head(data_classified_geo)
+  # (data_classified_geo$classified_NonTile + data_classified_geo$classified_Tile) * 1000000 * 900
+
+```
+
+
+
+
+```{r}
+
+# my_county_data <- as.data.frame(my_county)
+# names(my_county_data)
+my_county_tile <- my_county[,c("GEOID","ALAND","tile_m2")]
+my_county_tile$tile_nass_m2 <- my_county_tile$tile_m2
+nass_data_NA <- my_county_tile %>%
+  dplyr::filter(is.na(tile_m2)) # and 30 NA
+
+```
+
+
+```{r}
+# merge the classified data with NASS data
+merge <- merge(my_county_tile,data_classified_final,all.x = T)
+class(merge)
+names(merge)
+
+merge_NA_classified <- merge %>%
+  filter(is.na(classified_Tile_m2))  # 216 
+
+merge_NA_nass <- merge %>%
+  filter(is.na(tile_nass_m2))  # 30
+
+
+merge_NA_classified <- merge %>%
+  filter(is.na(classified_Tile_m2)) %>%
+  filter(!is.na(tile_nass_m2))  # 188 
+
+merge_NA_NASS <- merge %>%
+  filter(is.na(tile_nass_m2)) %>%
+  filter(!is.na(classified_Tile_m2))  # 2
+
+merge_NA_both <- merge %>%
+  filter(is.na(tile_nass_m2)) %>%
+  filter(is.na(classified_Tile_m2))  # 28
+
+
+library(tidyverse)
+merge_res <- merge %>%
+  #dplyr::mutate(residual = dplyr::case_when(classified_Tile > 1 ~ "NAclass", TRUE ~ 0))
+  dplyr::mutate(residual = case_when(
+    is.na(classified_Tile_m2) & !is.na(tile_nass_m2) ~ "NAclass",
+    !is.na(classified_Tile_m2) & is.na(tile_nass_m2) ~ "NAnass",
+    is.na(classified_Tile_m2) & is.na(tile_nass_m2) ~ "NAboth",
+    TRUE ~ as.character((classified_Tile_m2 - tile_nass_m2)/tile_nass_m2 * 100)
+  ))
+
+class(merge_res)
+names(merge)
+unique(merge_res$residual)
+str(merge_res)
+
+merge_res_text <- merge_res %>%
+  dplyr::filter(residual == "NAclass" | residual == "NAnass" | residual == "NAboth")
+class(merge_res_text)
+head(merge_res_text)
+
+merge_res_data <- merge_res %>%
+  dplyr::filter(residual != "NAclass" & residual != "NAnass" & residual != "NAboth")
+merge_res_data$residual <- as.numeric(merge_res_data$residual)
+class(merge_res_data)
+hist(merge_res_data$residual)
+hist(merge_res_data$residual, nclass = 1000, xlim = c(-100, 100))
+quantile(merge_res_data$residual)
+# quantile(merge_res_data$residual, probs = c(0,0.2,0.4,0.6,0.8,1))
+
+
+# class(merge_res_data)
+# class(states)
+# ggplot(merge_res_data) +
+#   geom_sf() +
+#   aes(fill = residual) +
+#   scale_fill_continuous(type = "viridis") +
+#   geom_sf(data = state, fill = NA, linewidth = 1.2, color = "black") +
+#   theme(legend.title = element_text(),
+#         legend.key.width = unit(.4, "in")) +
+#   labs(fill = "Residuals(%)") +
+#   theme_bw() +
+#   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+#   theme(legend.position = c(0.1, 0.1))
+```
+
+
+```{r}
+breaks <- c(-100,-50,-25, 0, 25, 50, 1100); breaks 
+
+is <- seq(1,length(breaks)-1, 1); is
+# is <- seq(1,length(breaks), 1); is
+
+bk <- format(round(breaks, 2), nsmall = 0); bk
+# for (i in is) {
+#   # print(breaks[i])
+#   bki <- paste0(bk[i], ' - ', bk[i+1]); print(bki)
+#   labels <- c(labels, bki)
+# }
+#labels
+#labels <- c("< -50", "[-50,-25)", "[-25, 0)", "[0,25)", "[25,50)", "> 50")
+breaks
+length(breaks)
+# length(labels)
+# rm(labels)
+# ### create colors  # https://colorbrewer2.org/#type=diverging&scheme=RdYlGn&n=5
+# colors <- c(
+#   '#d73027',
+#   '#fc8d59',
+#   '#fee090',
+#   #'#fee08b',
+#   '#e0f3f8',
+#   '#91bfdb',
+#   '#4575b4'
+#   #'#66bd63',
+#   #'#66bd63'
+# )
+
+colors <- c(
+  '#4575b4',
+  '#91bfdb',
+  '#e0f3f8',
+  #'#fee08b',
+  '#fee090',
+  '#fc8d59',
+  '#d73027'
+  #'#66bd63',
+  #'#66bd63'
+)
+
+# colors <- colors[length(colors):1] # reorder colors
+colors
+
+### double-check the numbers
+length(breaks)
+length(labels)
+length(colors)
+
+merge_res_data$brks <- cut(merge_res_data$residual, breaks=breaks) # labels=labels
+merge_res_data$labels <- merge_res_data$brks
+head(merge_res_data)
+
+labels <- levels(merge_res_data$labels)
+```
+
+
+```{r}
+#########  
+# Calculate bounding boxes
+bbox1 <- st_bbox(merge_res_data)
+bbox2 <- st_bbox(merge_res_text)
+
+# Combine bounding boxes
+combined_bbox <- c(
+  xmin = min(bbox1["xmin"], bbox2["xmin"]),
+  ymin = min(bbox1["ymin"], bbox2["ymin"]),
+  xmax = max(bbox1["xmax"], bbox2["xmax"]),
+  ymax = max(bbox1["ymax"], bbox2["ymax"])
+)
+
+# Print the combined bounding box
+print(combined_bbox)
+combined_bounds <- st_bbox(combined_bbox)
+
+
+residualPlot <-ggplot() +
+  geom_sf(data = merge_res_data, aes(fill = brks), color='gray60', size=0.05) +
+  geom_sf(data = merge_res_text, aes(fill = residual)) +
+  scale_fill_manual(values = c(colors,"#d9d9d9","#969696","#252525"),
+                    labels = c(labels,' NA - NASS', ' NA - Classified', ' NA - Both')) +
+  geom_sf(data = state, fill = NA, linewidth = 1, color = "black") +
+  theme_bw() +
+  theme(axis.title = element_blank(),legend.title = element_blank(),
+  # legend.box = "horizontal",  # Arrange legends horizontally
+  legend.position = c(0.8, 0.8),  # Adjust these values to move the legend (x, y)
+  legend.background = element_rect(fill = "transparent", color = "transparent"),  # Optional: make legend background transparent
+  legend.box.background = element_rect(color = "transparent"),  # Optional: make legend box background transparent
+  legend.spacing.x = unit(0, "mm"))+
+  guides(fill = guide_legend(reverse = T,  byrow = TRUE)) + # ncol = 2
+  coord_sf(xlim = c(combined_bounds["xmin"], combined_bounds["xmax"]), ylim = c(combined_bounds["ymin"], combined_bounds["ymax"])) +
+  annotate("text", label = "(a)", x = 1, y = 0.01, hjust = 0, vjust = 0, size = 4)
+residualPlot
+
+```
+
+```{r}
+str(merge_NA_classified)
+names(merge_NA_classified)
+hist(merge_NA_classified$tile_nass_m2) 
+median(merge_NA_classified$tile_nass_m2)  
+
+  # # get counts
+  # NA_state <- count(merge_NA_classified, 'state_name')
+  # names(NA_state) <- c("state_name","NAs")
+
+
+
+  # data_missing <- merge(data_state,NA_state,all.x = T)
+  # sum(data_missing$Data,na.rm = TRUE)
+  # sum(data_missing$NaS,na.rm = TRUE)
+
+# convert to long format and plot
+  # names(data_missing)
+  # data_missing_long <- gather(data_missing, group, CountyNumber, countyN:NAs, factor_key=TRUE)
+  # data_missing_long
+        # 
+        # # get the order
+        # data_state <- count(states_select, 'state_name')
+        # names(data_state) <- c("state_name","countyN")
+        # sum(data_state$countyN)
+        # 
+        # ggplot(data_state, aes(x=state_name , y=countyN)) +
+        #   geom_bar(stat="identity", position=position_dodge())+
+        #   scale_fill_manual(values = c("#1a9850","gray"))+
+        #   theme_bw(base_size = 16)+
+        #   geom_text(
+        #     aes(label = countyN),
+        #     colour = "white", size = 5,
+        #     vjust = 1.5, position = position_dodge(.9)
+        #   )
+        # 
+        # # check where the 61 states are
+        # merge_noNA_both <- merge %>%
+        #   filter(!is.na(tile_nass_km2)) %>%
+        #   filter(!is.na(classified_Tile))
+
+# so, there are ### counties, which have non-tile identified even NASS have data
+# check where are they?
+```
+
+
+
+```{r}
+head(merge_res_data)
+merge_res_data_df <- as.data.frame(merge_res_data)
+# my_counties_df <- as.data.frame(my_counties)
+# head(merge_res_data_df)
+# head(my_counties_df)
+# merge_area <- merge(my_counties, merge_res_data_df, by = "GEOID", all.x = T)
+# names(merge_area)
+merge_res_data_df$Tile_classified_percent <- merge_res_data_df$classified_Tile_m2/(merge_res_data_df$ALAND)
+merge_res_data_df$Tile_nass_percent <- merge_res_data_df$tile_nass_m2/(merge_res_data_df$ALAND)
+rmse(merge_res_data_df$Tile_classified_percent,merge_res_data_df$Tile_nass_percent)  #  0.1721299
+head(merge_res_data_df)
+```
+
+<!-- # residus at county - level  -->
+<!-- ```{r} -->
+<!-- merge_res_data_df$residual_percent <- (merge_res_data_df$classified_Tile - merge_res_data_df$tile_nass_km2)/merge_res_data_df$tile_nass_km2 -->
+<!-- hist(merge_res_data_df$residual_percent) -->
+<!-- class(merge_res_data_df) -->
+<!-- names(merge_res_data_df) -->
+
+<!-- # check the residuals  -->
+<!-- merge_area_NA <- merge_res_data_df %>% -->
+<!--   filter(is.na(residual_percent)) -->
+
+
+<!-- head(merge_res_data_df) -->
+<!-- ggplot(merge_res_data_df) + -->
+<!--   geom_sf() + -->
+<!--   aes(fill = residual_percent) + -->
+<!--   scale_fill_continuous(type = "viridis") + -->
+<!--   geom_sf(data = states, fill = NA, linewidth = 1.2, color = "black") + -->
+<!--   theme(legend.title = element_text(), -->
+<!--         legend.key.width = unit(.4, "in")) + -->
+<!--   labs(fill = "Residuals(%)") + -->
+<!--   theme_bw() + -->
+<!--   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + -->
+<!--   theme(legend.position = c(0.1, 0.1)) -->
+
+
+
+<!-- plot(county_na) -->
+<!-- tile_bdy <- st_read(dsn = "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry", layer = "Tile_Bdry_NoGL_Conic") # nolint -->
+<!-- # county_na <- readShapePoly(county_na, verbose=TRUE, proj4string=P4S.latlon) -->
+<!-- plot(tile_bdy,add = TRUE) #  -->
+
+<!-- ``` -->
+
+```{r}
+library(maptools)
+# Put equation & R2 coef to the top left corner
+merge_res_data$tile_nass_km2 <- merge_res_data$tile_nass_m2/1000000
+merge_res_data$classified_Tile_km2 <- merge_res_data$classified_Tile_m2/1000000
+
+formulas <- y ~ x # needed for ggpmisc's equation and R2 text
+# area_scatter <- ggplot(merge_res_data, aes(x = tile_nass_km2, y = classified_Tile_km2)) +
+#   geom_point(alpha = 0.7) +
+#   geom_smooth(method = "lm", formula = formulas, se = FALSE) +
+#   stat_poly_eq(aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~~")), 
+#                label.x.npc = "left", label.y.npc = "top",
+#                formula = formulas, parse = TRUE, size = 4) +
+#   # scale_color_brewer(palette = c("red","blue")) +
+#   # labs(y = "Classified Area (km^2)", 
+#   #      x = "NASS Area (km^2)") +
+#   ggtitle("a.Classified tile drainage area versus NASS") +
+#   labs(y = expression(Classified ~ Area ~ (km^2)),
+#        x = expression(NASS ~ Area ~ (km^2))) +
+#   theme_bw(base_size = 10) +
+#   geom_abline(linetype="dashed",linewidth = 1) +
+#   # scale_color_manual(values=c("red", "blue")) +
+#   # scale_x_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+#   # scale_y_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+#   coord_cartesian(ylim=c(0,2500),xlim = c(0, 2500)) +
+#   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#         panel.border = element_rect(colour = "black", fill=NA, linewidth = 2)) +
+#   theme(plot.title = element_text(hjust = 0.5)) 
+# area_scatter
+
+# Dave suggested to color by states
+names(merge_res_data)
+merge_res_data_state <- merge_res_data %>%
+  mutate(State = substr(GEOID, 1, 2))
+unique(merge_res_data_state$State)
+
+# search code and name 
+names(my_county)
+my_county_df <- as.data.frame(my_county) %>%
+  dplyr::select(GEOID,stt_lph)
+
+merge_res_data_merge <- merge(merge_res_data_state,my_county_df,by = "GEOID", all.x = TRUE)
+area_scatter <- ggplot(merge_res_data_merge, aes(x = tile_nass_km2, y = classified_Tile_km2),color = stt_lph) +
+  geom_point(aes(color = stt_lph), size = 3) + # alpha = 0.7
+  geom_smooth(method = "lm", formula = formulas, se = FALSE, color = "black",linewidth = 1) +
+  stat_poly_eq(aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~~")), 
+               label.x.npc = "left", label.y.npc = "top",
+               formula = formulas, parse = TRUE, size = 4) +
+  # ggtitle("a.Classified tile drainage area versus NASS") +
+  labs(y = expression(Classified ~ Area ~ (km^2)),
+       x = expression(NASS ~ Area ~ (km^2))) +
+  theme_bw(base_size = 12) +
+  geom_abline(linetype="dashed",linewidth = 1.5) +
+  # scale_color_manual(values=c("red", "blue")) +
+  # scale_x_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+  # scale_y_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+  coord_cartesian(ylim=c(0,2500),xlim = c(0, 2500)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, linewidth = 1.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  annotate("text", label = "(a)", x = 2300, y = 2500, hjust = 0, vjust = 0, size = 4) +
+  scale_color_manual(values = c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c", "#fb9a99",
+                                "#ffffb3", "#fdbf6f", "#ff7f00", "#cab2d6", "#6a3d9a",
+                                "#e31a1c", "#b15928", "#8dd3c7", "#fb8072"),  # Define custom colors
+                     name = "State") +  # Custom legend title
+  theme(legend.position = c(0.85, 0.35), # Place legend inside the plot
+        legend.background = element_rect(fill = "white", colour = "black"))  # Background for legend
+area_scatter
+```
+
+
+<!-- ```{r} -->
+<!-- fname <- paste0(tileDir,today, '_','Classified_NASS_area_868counties.png'); fname -->
+<!-- ggsave(filename = fname, -->
+<!--        plot = last_plot(), dpi = 100, width = 7, height = 7, units = 'in') -->
+<!-- ``` -->
+
+# merge residuals and scatter 
+```{r}
+figure <- ggarrange(area_scatter,residualPlot,nrow = 2)
+figure
+```
+
+```{r}
+fname <- paste0(tileDir,'Fig6_County_level_accuracy_SpatialResiduals.png'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 100, width = 5, units = 'in')
+
+fname <- paste0(tileDir,today, '_','Fig6_County_level_accuracy_SpatialResiduals.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 5, units = 'in') # ,
+```
+
+
+```{r}
+# Put equation & R2 coef to the top left corner
+formulas <- y ~ x # needed for ggpmisc's equation and R2 text
+head(merge_res_data)
+
+# get the state ID from GEOID
+str(merge_res_data)
+class(merge_res_data)
+merge_res_data_df <- as.data.frame(merge_res_data)
+
+merge_res_data_df$STATE_FIPS = substr(merge_res_data_df$GEOID,1,2)
+
+head(merge_res_data_df)
+names(merge_res_data_df)
+# merge state name 
+names(state)
+class(merge_res_data)
+state_select <- state[,c("STATE_FIPS","STATE")]
+state_df <- as.data.frame(state)
+
+merge_res_data_st <- merge(merge_res_data_df,state_df,by = "STATE_FIPS", all.x = T)
+names(merge_res_data_st)
+ggplot(merge_res_data_st, aes(x = tile_nass_km2, y = classified_Tile_km2), group = STATE) +
+  geom_point(size = 1, alpha = 0.3) +
+  facet_wrap(~STATE, ncol = 4, scales = "free") + # 
+  geom_smooth(method = "lm", formula = formulas, se = FALSE) +
+  stat_poly_eq(formula = formulas, aes(label = ..eq.label..), 
+               parse = TRUE, size = 2.5, col = "black", vjust = 1) +
+  stat_poly_eq(formula = formulas, aes(label = ..rr.label..), 
+               parse = TRUE, size = 2.5, col = "black", vjust = 2) +
+  # stat_poly_eq(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~~")), 
+  #              label.x.npc = "left", label.y.npc = "top",
+  #              formula = formulas, parse = TRUE, size = 3) +
+  # scale_color_brewer(palette = c("red","blue")) +
+  # labs(y = "Classified Area (km^2)", 
+  #      x = "NASS Area (km^2)") +
+  labs(y = expression(Classified ~ Area ~ (km^2)),
+       x = expression(NASS ~ Area ~ (km^2))) +
+  theme_bw(base_size = 10) +
+  geom_abline(linetype="dashed",linewidth = 1) +
+  # scale_color_manual(values=c("red", "blue")) +
+  # scale_x_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+  # scale_y_continuous(breaks = seq(0, 3300, by = 300), limits = c(0, 3300)) +
+  #coord_cartesian(ylim=c(0,1000),xlim = c(0, 1000)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+```
+
+# Combine both plots using cowplot::plotgrid()
+```{r}
+fname <- paste0(tileDir,today, '_','Classified_NASS_area_scatter_allStates.png'); fname
+fname <- paste0(tileDir,today, '_','Classified_NASS_area_scatter_allStates.pdf'); fname
+ggsave(filename = fname,
+       plot = last_plot(), dpi = 600, width = 7.5, height = 7.5, units = 'in')
+```
+
+# calculate RMSE
+```{r}
+# https://www.r-bloggers.com/2021/07/how-to-calculate-root-mean-square-error-rmse-in-r/
+rmse(merge_NA_classified$classified_Tile, merge_NA_classified$tile_nass_km2)
+rmse(merge_noNA_both$classified_Tile, merge_noNA_both$tile_nass_km2)  # 356.2239
+```
+

@@ -1,0 +1,606 @@
+---
+title: "1_NASS_Tile_Cropland_14states_2017_20230329"
+author: "Luwen Wan"
+date: "2024-06-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# 1.1 install all the packages and load them ----------------------------------------------------------------
+remove(list = ls())
+setwd("S:/Users/luwen/Tile_Mapping_States/NASS/processed/14states")
+library(devtools)  # Via devtools
+library(rnassqs)  # install_github('potterzot/rnassqs')
+library(naniar)
+library(stringr)
+library(rgdal)
+library(dplyr)
+
+library(ggplot2)
+library(sf)
+library(magrittr)
+library(tidyverse)
+library("readxl")
+library(scales)
+library(biscale)
+library(cowplot)
+library(glue)
+library(dplyr)
+library(ggplot2)
+library(ggpattern)
+library(classInt)     # finds class intervals for continuous variables
+library(wesanderson)
+library(RColorBrewer )
+library(viridis)
+
+# outdir <- "S:/Users/luwen/Tile_Mapping_States/NASS/processed/19states"
+
+```
+
+```{r}
+
+# 1.2 read the data in 2017 and clean up  ----------------------------------
+# https://cran.r-project.org/web/packages/usdarnass/vignettes/usdarnass_output.html
+tile_states <- read.csv("S:/Users/luwen/Tile_Mapping_States/NASS/land_use_practices_DrainedByTile_19STATES_2017.csv",stringsAsFactors = F)
+names(tile_states)
+tile_states_select <- tile_states[,c("county_ansi","county_name","state_alpha","state_ansi","short_desc","Value","year")]
+tile_states_select_value <- tile_states_select %>%
+  filter(Value >= 0)
+tile_states_select_value$Value <- as.numeric(gsub(",", "", tile_states_select_value$Value))
+unique(tile_states_select_value$state_alpha)  # 19states 
+
+tile_states14_value <- tile_states_select_value %>%
+  filter(state_alpha == "ND"|state_alpha == "SD"|
+           state_alpha == "NE"|state_alpha == "KS"|
+           state_alpha == "MN"|state_alpha == "IA"|
+           state_alpha == "MO"|state_alpha == "WI"|
+           state_alpha == "IL"|state_alpha == "IN"|
+           state_alpha == "MI"|
+           state_alpha == "OH"|state_alpha == "PA"|
+           state_alpha == "NY")
+unique(tile_states14_value$state_alpha)
+write.csv(tile_states14_value,"land_use_practices_DrainedByTile_14STATES_2017.csv")
+sum(tile_states14_value$Value) # 51486385
+
+# how many percnt of tile in 14 states that I am studying takes 
+CONUS <- read.csv("S:/Users/luwen/Tile_Mapping_States/NASS/land_use_practices_DrainedByTile_CONUS_2017.csv",stringsAsFactors = F)
+names(CONUS)
+CONUS_select <- CONUS[,c("county_ansi","county_name","state_alpha","state_ansi","short_desc","Value","year")]
+CONUS_value <- CONUS_select %>%
+  filter(Value >= 0)
+CONUS_value$Value <- as.numeric(gsub(",", "", CONUS_value$Value))
+unique(CONUS_value$state_alpha)  # all states 
+sum(CONUS_value$Value) # 55398730
+
+x <- sum(tile_states14_value$Value)/sum(CONUS_value$Value);x  # 0.9293784
+# American National Standards Institute: ansi
+# https://data.nal.usda.gov/dataset/nass-quick-stats/resource/10fae7a3-26c4-4b7d-b13f-3f5107595e1a then click on glossary and look at the doc
+# add leading 0 to couty ansi, and merge the sate ansi together
+tile_states_select$county_ansi_new <- str_pad(tile_states_select$county_ansi, width=3, pad="0")
+tile_states_select$state_ansi_new <- str_pad(tile_states_select$state_ansi, width=2, pad="0")
+# OR states_select$county_ansi <- sprintf("%03d",states_select$county_ansi) # fix to 3 characters
+tile_states_select$GEOID <- paste0(tile_states_select$state_ansi_new,tile_states_select$county_ansi_new)  # create an unique ID for each state
+
+# replace Value is (D) with NA
+str(tile_states_select)
+is.na(tile_states_select) <- tile_states_select == "                 (D)"  # have to have the spaces here, see the original data
+tile_states_select_na <- tile_states_select %>%
+  filter(is.na(Value))               # total 1512 couties, and 150 county with "(D)" Value
+
+# since it contains commas as thousand separator
+tile_states_select$tile_acre <- as.numeric(gsub(",", "", tile_states_select$Value))
+names(tile_states_select)
+head(tile_states_select)
+tile_states_select <- tile_states_select[,c("GEOID","state_alpha","tile_acre")]
+
+
+
+```
+
+```{r}
+# # 1.3 add the data to county map  ------------------------------------------
+        # # read the county data from TIGER, clipped by state polygon, leaving 19 potential states
+        # counties <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL_counties.shp")    
+        # head(counties)
+        # names(counties)
+        # # class(counties)
+        # # write.csv(counties@data, file="S:/Users/luwen/Tile_Mapping_States/NASS/processed/19states/19states_counties.csv")
+        # # 
+        # # # read the county csv file
+        # # counties_csv <- read.csv("S:/Users/luwen/Tile_Mapping_States/NASS/processed/19states/19states_counties.csv",stringsAsFactors = F)
+        # # names(counties_csv)
+        # # meta data from TIGER: https://www2.census.gov/geo/pdfs/maps-data/data/tiger/tgrshp2017/TGRSHP2017_TechDoc_Ch3.pdf
+        # # ALAND: Current land area; AWATER: Current water area
+        # # the unit is square meter, see https://stackoverflow.com/questions/31246602/shape-area-and-aland-awater-in-tiger-census-data
+        # counties_csv_select <- counties[,c("GEOID","NAME","ALAND","AWATER","INTPTLON","INTPTLAT","Shape_Area")]
+        # 
+        # # merge the county and drained tile data
+        # names(counties_csv_select)
+        # counties_csv_data <- as.data.frame(counties_csv_select)
+        # str(counties_csv_data)
+        # 
+        # sum(counties_csv_data$ALAND)
+        # 
+        # names(states_select)
+        # county_data <- merge(x = states_select, y = counties_csv_select, by = "GEOID", all.X = T)   # some of the NA from (D), some of them are missing in the survey
+        # names(county_data)
+        # 
+        # county_data_select <- county_data[,c("GEOID","county_name","short_desc","tile_acre","year","ALAND","AWATER","Shape_Area")]
+        # 
+        # county_data_select_na <- county_data_select %>%
+        #   filter(is.na(tile_acre))  
+        # 
+        # str(county_data_select)
+        # # conver to numeric
+        # county_data_select$tile_acre <- as.numeric(county_data_select$tile_acre)
+        # # only keep the county with data 
+        # county_data_select_data <- county_data_select %>%
+        #   filter(!is.na(tile_acre))   # 1108 counties
+        # county_data_select_data$tile_m2 <- county_data_select_data$tile_acre * 4046.86
+        # county_data_select_data$t_aland_pr <- (county_data_select_data$tile_m2/county_data_select_data$ALAND) * 100
+        # 
+        # write.csv(county_data_select_data,"./14states_county_tile_percent_2017.csv")
+```
+
+```{r}
+# 1.4 2017 cropland data -------------------------------------------------------
+# https://cran.r-project.org/web/packages/usdarnass/vignettes/usdarnass_output.html
+states_ag <- read.csv("S:/Users/luwen/Tile_Mapping_States/NASS/Ag_land_19states_2017.csv",stringsAsFactors = F)
+names(states_ag)
+states_ag_select <- states_ag[,c("county_ansi","state_ansi","county_name","state_alpha","Value","year")]
+
+states_select_value <- states_ag_select %>%
+  filter(Value >= 0)
+states_select_value$Value <- as.numeric(gsub(",", "", states_select_value$Value))
+unique(states_select_value$state_alpha)  # all states 
+sum(states_select_value$Value) # 270292209
+
+
+states14_ag_value <- states_select_value %>%
+  filter(state_alpha == "ND"|state_alpha == "SD"|
+           state_alpha == "NE"|state_alpha == "KS"|
+           state_alpha == "MN"|state_alpha == "IA"|
+           state_alpha == "MO"|state_alpha == "WI"|
+           state_alpha == "IL"|state_alpha == "IN"|
+           state_alpha == "MI"|
+           state_alpha == "OH"|state_alpha == "PA"|
+           state_alpha == "NY")
+unique(states14_ag_value$state_alpha)
+write.csv(states14_ag_value,"Ag_land_14states_2017.csv")
+sum(states14_ag_value$Value) # 237886108
+
+
+# American National Standards Institute: ansi
+# https://data.nal.usda.gov/dataset/nass-quick-stats/resource/10fae7a3-26c4-4b7d-b13f-3f5107595e1a then click on glossary and look at the doc
+# add leading 0 to couty ansi, and merge the sate ansi together
+states14_ag_value$county_ansi_new <- str_pad(states14_ag_value$county_ansi, width=3, pad="0")
+states14_ag_value$state_ansi_new <- str_pad(states14_ag_value$state_ansi, width=2, pad="0")
+# OR states_select$county_ansi <- sprintf("%03d",states_select$county_ansi) # fix to 3 characters
+states14_ag_value$GEOID <- paste0(states14_ag_value$state_ansi_new,states14_ag_value$county_ansi_new)  # create an unique ID for each state
+
+# replace Value is (D) with NA
+str(states14_ag_value)
+is.na(states14_ag_value) <- states14_ag_value == "                 (D)"  # have to have the spaces here, see the original data
+states14_ag_value_na <- states14_ag_value %>%
+  filter(is.na(Value))               # total 1512 couties, and 150 county with "(D)" Value
+
+# since it contains commas as thousand separator
+states14_ag_value$cropland_acre <- as.numeric(gsub(",", "", states14_ag_value$Value))
+names(states14_ag_value)
+
+states14_ag_final <- states14_ag_value[,c("GEOID","cropland_acre")]
+```
+
+```{r}
+# 1.5 map the percentage of tile in county area -------------------------------
+counties <- read_sf("S:/Users/luwen/Tile_Mapping_States/14statesGIS/Tile_Bdry_NoGL_14states_counties.shp")   
+states <- read_sf("S:/Users/luwen/Tile_Mapping_States/14statesGIS/Tile_Bdry_NoGL_14states.shp")
+
+# merge the tile area data to counties
+mydata1 <- merge(counties, tile_states_select, by = "GEOID",all.x = T)
+mydata <- merge(mydata1, states14_ag_final, by = "GEOID",all.x = T)
+
+names(mydata)
+head(mydata)
+mydata_tile <- mydata[,c("GEOID","STATEFP","state_alpha","Shape_Area","ALAND","AWATER","tile_acre","cropland_acre","geometry" )]
+
+mydata_tile$tile_m2 <- mydata_tile$tile_acre * 4046.86
+mydata_tile$cropland_m2 <- mydata_tile$cropland_acre * 4046.86
+
+mydata_tile$t_aland_pr <- (mydata_tile$tile_m2/mydata_tile$ALAND) * 100
+mydata_tile$t_ag_pr <- (mydata_tile$tile_m2/mydata_tile$cropland_m2) * 100
+mydata_tile$ag_alnd_pr <- (mydata_tile$cropland_m2/mydata_tile$ALAND) * 100
+
+
+head(mydata_tile)
+names(mydata_tile)
+class(mydata_tile)
+write_sf(mydata_tile,"./States14_county_tile_ag_aland_percent_2017.shp")
+write_sf(mydata_tile,"S:/Users/luwen/Tile_Mapping_States/14statesGIS/States14_county_tile_ag_aland_percent_2017_counties.shp")
+write_sf(mydata_tile,"S:/Users/luwen/Tile_Mapping_States/14statesGIS/States14_county_tile_ag_aland_percent_2017_counties_select.shp")
+
+
+
+gs.pal <- colorRampPalette(c("#a6611a","#018571"),bias=.1,space="rgb")
+# gradient color 
+ggplot(mydata_tile) +
+  geom_sf() +
+  aes(fill = tile_aland_pr) +
+  # scale_fill_viridis(na.value = 'gray95') +
+  # scale_fill_viridis(option = "cividis", labels = scales::dollar) +
+  scale_fill_distiller(type = 'seq', palette = "YlGn", na.value = 'gray90', direction = 1) +
+  # scale_fill_manual(values = c("#ffffcc", "#c2e699", "#78c679","#31a354", "#E69F00", "#006837")) +
+  # scale_fill_continuous(type = ) +
+  # scale_color_gradient(low = "#AF7AC5", high = "#E74C3C") +
+  # scale_colour_manual(values=gs.pal(5))+
+  # scale_fill_manual(values=wes_palette(n=3, name="GrandBudapest")) +
+  geom_sf(data = states, fill = NA, size = 1, color = "black") +
+  theme(legend.title = element_text(),
+        legend.key.width = unit(.4, "in")) +
+  # labs(fill = "Drained Tiles 2017 \n (% of Land Area)") +
+  theme_bw(base_size = 24) +
+  ggtitle("Drained Tiles in 2017 (% of Land Area)")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.title = element_blank(),plot.title = element_text(hjust = 0.5)) +
+  theme(legend.position = c(0.76, 0.82))
+
+ggsave(filename = "14state_tile_aland_pr_2017-YlGn.jpg", plot = last_plot(), dpi = 600,
+       width = 10, height = 6.5, units = 'in')
+ggplot(mydata_tile) +
+  geom_sf() +
+  aes(fill = tile_ag_pr) +
+  # scale_fill_viridis(na.value = 'gray95') +
+  # scale_fill_viridis(option = "cividis", labels = scales::dollar) +
+  scale_fill_distiller(type = 'seq', palette = "YlGn", na.value = 'gray90', direction = 1) +
+  # scale_fill_manual(values = c("#ffffcc", "#c2e699", "#78c679","#31a354", "#E69F00", "#006837")) +
+  # scale_fill_continuous(type = ) +
+  # scale_color_gradient(low = "#AF7AC5", high = "#E74C3C") +
+  # scale_colour_manual(values=gs.pal(5))+
+  # scale_fill_manual(values=wes_palette(n=3, name="GrandBudapest")) +
+  geom_sf(data = states, fill = NA, size = 1, color = "black") +
+  theme(legend.title = element_text(),
+        legend.key.width = unit(.4, "in")) +
+  # labs(fill = "Drained Tiles 2017 \n (% of Land Area)") +
+  theme_bw(base_size = 24) +
+  ggtitle("Drained Tiles in 2017 (% of Ag Area)")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.title = element_blank(),plot.title = element_text(hjust = 0.5)) +
+  theme(legend.position = c(0.76, 0.82))
+
+ggsave(filename = "14state_tile_ag_pr_2017-YlGn.jpg", plot = last_plot(), dpi = 600,
+       width = 10, height = 6.5, units = 'in')
+
+
+
+ggplot(mydata_tile) +
+  geom_sf() +
+  aes(fill = ag_alnd_pr) +
+  # scale_fill_viridis(na.value = 'gray95') +
+  # scale_fill_viridis(option = "cividis", labels = scales::dollar) +
+  scale_fill_distiller(type = 'seq', palette = "YlGn", na.value = 'gray90', direction = 1) +
+  # scale_fill_manual(values = c("#ffffcc", "#c2e699", "#78c679","#31a354", "#E69F00", "#006837")) +
+  # scale_fill_continuous(type = ) +
+  # scale_color_gradient(low = "#AF7AC5", high = "#E74C3C") +
+  # scale_colour_manual(values=gs.pal(5))+
+  # scale_fill_manual(values=wes_palette(n=3, name="GrandBudapest")) +
+  geom_sf(data = states, fill = NA, size = 1, color = "black") +
+  theme(legend.title = element_text(),
+        legend.key.width = unit(.4, "in")) +
+  # labs(fill = "Drained Tiles 2017 \n (% of Land Area)") +
+  theme_bw(base_size = 24) +
+  ggtitle("Ag in 2017 (% of Land Area)")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.title = element_blank(),plot.title = element_text(hjust = 0.5)) +
+  theme(legend.position = c(0.76, 0.82))
+
+ggsave(filename = "14state_ag_alnd_pr_2017-YlGn.jpg", plot = last_plot(), dpi = 600,
+       width = 10, height = 6.5, units = 'in')
+
+```
+
+```{r}
+
+#' # 2. 2012 tile data  ------------------------------------------------------
+#' 
+#' # 2.1 read 15 states data in each sheet -----------------------------------
+#' ILLINOIS <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "ILLINOIS")
+#' INDIANA <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "INDIANA")
+#' IOWA <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "IOWA")
+#' KANSAS <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "KANSAS")
+#' MICHIGAN <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "MICHIGAN")
+#' MINNESOT <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "MINNESOT")
+#' NEBRASKA <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "NEBRASKA")
+#' NEWYORK <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "NEWYORK")
+#' OHIO <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "OHIO")
+#' PENNSYLV <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "PENNSYLV")
+#' SOUTHDAK <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "SOUTHDAK")
+#' WISCONSI <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "WISCONSI")
+#' NORTHDAK <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "NORTHDAK")
+#' KENTUCKY <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "KENTUCKY")
+#' MISSOURI <- read_excel("S:/Users/luwen/Tile_Mapping_States/NASS/2012_land_use_practices_by_county.xlsx", sheet = "MISSOURI")
+#' 
+#' 
+#' # # 2.2 merge all the rows and  clean up  ---------------------------------
+#' data2012 <- rbind(ILLINOIS,INDIANA,IOWA,KANSAS,MICHIGAN,MINNESOT,
+#'                   NEBRASKA,NEWYORK,OHIO,PENNSYLV,SOUTHDAK,WISCONSI,NORTHDAK,KENTUCKY,MISSOURI)
+#' data2012$DataValue <- as.numeric(data2012$DataValue)
+#' 
+#' # filter all the item we need (drained by tile )
+#' data2012_filter <- data2012 %>%
+#'   #filter(grepl("*Acres, 2012$", DataItem)) %>%
+#'   filter(grepl("*tile, Acres, 2012$", DataItem)) %>%   # tile tile !!! 
+#'   as.data.frame()
+#' 
+#' # filter data for each state 
+#' data2012_state <- data2012_filter %>%
+#'   filter(CountyFips == 0)
+#' names(data2012_state)
+#' data2012_state_new <- data2012_state[,c("StateFips","CountyFips","StateCountyName","DataItem","DataValue")]
+#' # write.csv(data2012_state_new,"15states_tile_2012.csv")
+#' 
+#' data2012_filter_county <- data2012_filter %>%
+#'   filter(CountyFips > 0)
+#' 
+#' # add leading zaro to county ID and create an unique ID for each county 
+#' data2012_filter_county$CountyFips_new <- str_pad(data2012_filter_county$CountyFips, width=3, pad="0")
+#' data2012_filter_county$GEOID <- paste0(data2012_filter_county$StateFips,data2012_filter_county$CountyFips_new)  # create an unique ID for each state 
+#' 
+#' names(data2012_filter_county)
+#' data2012_county_new <- data2012_filter_county[,c("StateFips","CountyFips","GEOID","StateCountyName","DataItem","DataValue")]
+#' 
+#' 
+#' # read the county  file 
+#' counties <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL_counties.shp")   
+#' head(counties)
+#' counties_csv_select <- counties[,c("GEOID","NAME","ALAND","AWATER","INTPTLON","INTPTLAT","Shape_Area")]
+#' 
+#' # meta data from TIGER: https://www2.census.gov/geo/pdfs/maps-data/data/tiger/tgrshp2017/TGRSHP2017_TechDoc_Ch3.pdf 
+#' # ALAND: Current land area; AWATER: Current water area
+#' # the unit is square meter, see https://stackoverflow.com/questions/31246602/shape-area-and-aland-awater-in-tiger-census-data
+#' # merge the county and drained tile data 
+#' names(data2012_county_new)
+#' names(counties_csv_select)
+#' county_data <- merge(x = data2012_county_new, y = counties_csv_select, by = "GEOID", all.y = T)   # some of the NA from (D), some of them are missing in the survey 
+#' names(county_data)
+#' 
+#' county_data_select <- county_data[,c("GEOID","StateFips","CountyFips","StateCountyName","DataItem","DataValue","ALAND","AWATER")]
+#' 
+#' county_data_select_na <- county_data_select %>%
+#'   filter(is.na(DataValue))   # 116 rows are NA
+#' 
+#' county_data_select_NOna <- county_data_select %>%
+#'   filter(!is.na(DataValue))  
+#' sum(county_data_select_NOna$DataValue) # 45476706
+#' 
+#' str(county_data_select)
+#' 
+#' county_data_select$tile_m2_2012 <- county_data_select$DataValue * 4046.86
+#' county_data_select$aland_percent_2012 <- (county_data_select$tile_m2_2012/county_data_select$ALAND) * 100
+#' 
+#' # save csv for 2012 
+#' write.csv(county_data_select,"./15states_county_tile_percent_2012.csv")
+#' 
+#' # 2.4 map the percentage of tile in county area -------------------------------
+#' 
+#' counties <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL_counties.shp")   
+#' states <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL.shp")
+#' 
+#' 
+#' # merge the tile area data to counties 
+#' mydata <- merge(counties, county_data_select, by = "GEOID",all.x = T)
+#' names(mydata)
+#' 
+#' ggplot(mydata) + 
+#'   geom_sf() + 
+#'   aes(fill = aland_percent_2012) +
+#'   scale_fill_continuous(type = "viridis") +
+#'   geom_sf(data = states, fill = NA, size = 1, color = "black") +
+#'   theme(legend.title = element_text(),
+#'         legend.key.width = unit(.2, "in")) +
+#'   labs(fill = "Drained Tiles \n 2012 (% Area)") +
+#'   theme_bw(base_size = 24) +
+#'   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+#'   theme(legend.position = c(0.76, 0.78)) 
+#' 
+#' # ggsave(filename = "15state_Tile_Area_percent_2012.pdf", plot = last_plot(), dpi = 300,
+#' #        width = 8, height = 5, units = 'in')
+#' 
+#' # 3. tile area change from 2012 to 2017 --------------------------------------
+#' 
+#' # 3.1 read the data in these two years  ---------------------------------------
+#' 
+#' # read the data 
+#' tile_2012 <- read.csv("15states_county_tile_percent_2012.csv",stringsAsFactors = F)
+#' tile_2017 <- read.csv("15states_county_tile_percent_2017.csv",stringsAsFactors = F)
+#' names(tile_2012)
+#' names(tile_2017)
+#' # filter the column needed and merge to one dataframe and save to csv file 
+#' tile_2012_new <- tile_2012[,c("GEOID","StateFips","CountyFips","StateCountyName","DataItem","DataValue","ALAND","AWATER","tile_m2_2012","aland_percent_2012")]
+#' names(tile_2012_new) <- c("GEOID","StateFips","CountyFips","StateCountyName","DataItem","tile_acre_12","ALAND","AWATER","tile_m2_12","aland_percent_12")
+#' tile_2017_new <- tile_2017[,c("GEOID","county_name","tile_acre","tile_m2","aland_percent")]
+#' names(tile_2017_new) <- c("GEOID","county_name","tile_acre_17","tile_m2_17","aland_percent_17")
+#' tile_2012_2017 <- merge(x = tile_2012_new, y = tile_2017_new, by = "GEOID")
+#' names(tile_2012_2017)
+#' head(tile_2012_2017)
+#' tile_2012_2017_filter <- tile_2012_2017[,c("GEOID","StateFips","CountyFips","county_name","StateCountyName","tile_acre_12","tile_m2_12","tile_acre_17","tile_m2_17","aland_percent_12","aland_percent_17","ALAND","AWATER")]
+#' 
+#' tile_2012_2017_filter$tile_m2_diff <- tile_2012_2017_filter$tile_m2_17 - tile_2012_2017_filter$tile_m2_12
+#' tile_2012_2017_filter$aland_percent_diff <- tile_2012_2017_filter$tile_m2_diff / tile_2012_2017_filter$ALAND * 100
+#' write.csv(tile_2012_2017_filter,"15states_tile_2012_2017_diff.csv")
+#' 
+#' # take a look 
+#' hist(tile_2012_2017_filter$aland_percent_diff)
+#' names(tile_2012_2017_filter)
+#' tile_2012_2017_nonNA <- tile_2012_2017_filter %>%
+#'   filter(!is.na(aland_percent_diff)) %>%
+#'   filter(aland_percent_diff > 0)
+#' # 754 out of 1066 counties increased  
+#' 
+#' 
+#' # 3.2 map the change, continuous value ---------------------------
+#' counties <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL_counties.shp")   
+#' states <- read_sf("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Tile_Bdry/Tile_Bdry_NoGL.shp")
+#' 
+#' # merge the tile area data to counties 
+#' mydata <- merge(counties, tile_2012_2017_filter, by = "GEOID",all.x = T)
+#' names(mydata)
+#' # write_sf(mydata,"./15states_Area_percent_diff.shp")
+#' 
+#' # Quantile Classification
+#' 
+#' ggplot(mydata) + 
+#'   geom_sf() + 
+#'   aes(fill = aland_percent_diff) +
+#'   geom_sf(data = states, fill = NA, size = 1, color = "black") +
+#'   #scale_fill_continuous(type = "gradient") +
+#'   #scale_fill_continuous(type = "viridis") +
+#'   # scale_fill_gradient2(
+#'   #   low = scales::muted("blue"),mid = 'white', high = scales::muted("red"),
+#'   #   # low = "blue",mid = 'white', high = "red", 
+#'   #   midpoint = 0, space = "Lab",
+#'   #   na.value = "grey50", guide = "colourbar", aesthetics = "fill"
+#'   # ) +
+#'   scale_fill_distiller(type = "div", palette = "RdYlBu", na.value = 'gray80', direction = -1) +
+#'   theme(legend.title = element_text(),
+#'         legend.key.width = unit(.4, "in")) +
+#'   # labs(fill = "Drained Tiles Change (% Area)") +
+#'   labs(fill = "Area Change (%)") +
+#'   theme_bw(base_size = 24) +
+#'   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#'         legend.title = element_blank(),plot.title = element_text(hjust = 0.5)) +
+#'   theme(legend.position = c(0.73, 0.79))
+#' 
+#' ggsave(filename = "15states_Area_percent_diff_.pdf", plot = last_plot(), dpi = 300,
+#'        width = 8, height = 5, units = 'in')
+#' 
+#' 
+#' # 3.3 map the change with quantile ---------------------------------------------------
+#' nclr <- 5
+#' class <- classIntervals(mydata$aland_percent_diff, nclr,
+#'                         style="quantile", na.rm = T, dataPrecision = 0.01); class  ### 'quantile'  'jenks'
+#' breaks <- class$brks; breaks
+#' breaks <- round(class$brks,2); breaks
+#' breaks <- c(-11.64,-0.08,0,0.13,0.74,3.29,20.41); breaks
+#' # manually add 0 to be as one of break 
+#' # and change the last break, otherwise we probably get NA value 
+#' 
+#' is <- seq(1,length(breaks)-1, 1); is
+#' # is <- seq(1,length(breaks), 1); is
+#' labels <- c()
+#' bk <- format(round(breaks, 2), nsmall = 2); bk
+#' for (i in is) {
+#'   # print(breaks[i])
+#'   bki <- paste0(bk[i], ' - ', bk[i+1]); print(bki)
+#'   labels <- c(labels, bki)
+#' }
+#' labels
+#' breaks
+#' length(breaks)
+#' length(labels)
+#' 
+#' ### create colors  # https://colorbrewer2.org/#type=diverging&scheme=RdYlGn&n=5
+#' 
+#' colors <- c(
+#'   '#d73027',
+#'   #'#f46d43',
+#'   '#fc8d59',
+#'   #'#fee08b',
+#'   '#fee090',
+#'   '#e0f3f8',
+#'   '#91bfdb',
+#'   #'#66bd63',
+#'   '#4575b4'
+#' )
+#' 
+#' colors <- colors[length(colors):1] # reorder colors
+#' colors
+#' 
+#' ### double-check the numbers
+#' length(breaks) #7 
+#' length(labels)  #6
+#' length(colors)  #6
+#' 
+#' ### 
+#' mydata$brks <- cut(mydata$aland_percent_diff, breaks=breaks, labels=labels)
+#' levels(mydata$brks)
+#' str(mydata$brks)
+#' head(mydata)
+#' 
+#' ggplot(mydata) + 
+#'   geom_sf(aes(fill = brks)) + 
+#'   geom_sf(data = states, fill = NA, size = 1, color = "black") +
+#'   scale_fill_manual(values = colors, 
+#'                     labels = labels,
+#'                     na.value = 'gray90',) +
+#'   guides(fill = guide_legend(label.hjust = 0, label = T, reverse = T)) +
+#'   #scale_fill_continuous(type = "gradient") +
+#'   #scale_fill_continuous(type = "viridis") +
+#'   # scale_fill_gradient2(
+#'   #   low = scales::muted("blue"),mid = 'white', high = scales::muted("red"),
+#'   #   # low = "blue",mid = 'white', high = "red", 
+#'   #   midpoint = 0, space = "Lab",
+#'   #   na.value = "grey50", guide = "colourbar", aesthetics = "fill"
+#'   # ) +
+#'   # scale_fill_distiller(type = "div", palette = "RdYlBu", na.value = 'gray80', direction = -1) +
+#'   theme(legend.title = element_text(),
+#'         legend.key.width = unit(.4, "in")) +
+#'   ggtitle("Area Change of Drained Tiles from \n 2012 to 2017 (% of Land Area)")+
+#'   # labs(fill = "Drained Tiles Change (% Area)") +
+#'   #labs(fill = "Area Change (%)") +
+#'   theme_bw(base_size = 20) +
+#'   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+#'         legend.title = element_blank(),plot.title = element_text(hjust = 0.5),
+#'         legend.background=element_blank()) +
+#'   theme(legend.position = c(0.77, 0.82))
+#' 
+#'   
+#' ggsave(filename = "15states_Area_percent_diff_quantile.jpg", plot = last_plot(), dpi = 600,
+#'          width = 10, height = 6.5, units = 'in') 
+#' 
+#' # ggsave(filename = "15states_Area_percent_diff_quantile.pdf", plot = last_plot(), dpi = 300,
+#' #        width = 8, height = 5, units = 'in')
+#' 
+#' 
+
+```
+
+```{r}
+# 1.6 check for my counties ------------------------------
+mydata_tile <- read_sf("S:/Users/luwen/Tile_Mapping_States/14statesGIS/States14_county_tile_ag_aland_percent_2017_counties_select.shp")
+names(mydata_tile)
+mydata_tile <- as.data.frame(mydata_tile)
+mydata_tile_select <- mydata_tile[,c("GEOID","ALAND","AWATER","tile_m2","crpln_2","t_lnd_p","t_ag_pr","ag_lnd_")]
+
+
+actualCounty <- read_sf("S:/Users/luwen/Tile_Mapping_States/14statesGIS/Tile_Bdry_NoGL_14states_counties.shp")
+names(actualCounty)
+actualCounty <- as.data.frame(actualCounty)
+actualCounty <- actualCounty[,c("GEOID","NAME")]
+
+mydata_tile_county <- merge(mydata_tile_select,actualCounty,all.y = T)
+mydata_tile_county[mydata_tile_county == 0] <- NA
+head(mydata_tile_county)
+mydata_tile_county[mydata_tile_county == 0] <-NA
+sum(mydata_tile_county$tile_m2, na.rm = T)
+
+hist(mydata_tile_county$tile_m2)
+hist(mydata_tile_county$crpln_2)  
+
+hist(mydata_tile_county$t_lnd_p)
+hist(mydata_tile_county$t_ag_pr)    
+hist(mydata_tile_county$ag_lnd_)
+
+quantile(mydata_tile_county$tile_m2,na.rm = T, probs = seq(.1, .9, by = .1))
+quantile(mydata_tile_county$crpln_2,na.rm = T, probs = seq(.1, .9, by = .1))
+
+quantile(mydata_tile_county$t_lnd_p,na.rm = T, probs = seq(.1, .9, by = .1))
+quantile(mydata_tile_county$t_ag_pr,na.rm = T, probs = seq(.1, .9, by = .1))
+quantile(mydata_tile_county$ag_lnd_,na.rm = T, probs = seq(.1, .9, by = .1))
+
+
+```
+

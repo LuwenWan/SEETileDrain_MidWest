@@ -1,0 +1,178 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# load packages 
+```{r Packages, include=FALSE}
+# To clear your environment
+remove(list = ls())
+
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(scales)
+library(lubridate)
+
+## data describe
+library(summarytools)
+
+library(sf)
+library(proj4)
+library(maps)
+library(mapdata)
+
+library(RColorBrewer)
+library(viridis)
+# devtools::install_github("jaredhuling/jcolors")
+library(jcolors)
+library(scico) ## colors
+
+library(sf)
+library(maps)
+library(mapdata)
+```
+
+# working directory 
+```{r Dirs, include=FALSE}
+### Set work dir ----------------------------------------------------------
+dataout <- "S:\\Users\\luwen\\Tile_Mapping_States\\1_MyTile\\Midwest_Diss_20230802"
+ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20230801/"
+```
+
+
+```{r Shapefile, include=FALSE}
+shp <- map_data("usa") ## world
+head(shp)
+
+getwd()
+gom <- sf::st_read(dsn = "S:\\Users\\luwen\\Tile_Mapping_States\\14statesGIS\\Tile_Bdry_NoGL_14states.shp")
+
+cty <- sf::st_read(dsn = "S:\\Users\\luwen\\Tile_Mapping_States\\14statesGIS\\States14_county_tile_ag_aland_percent_2017_counties_select.shp")
+head(cty)
+
+cty2 <- cty %>%
+  dplyr::mutate(
+    Tile = ifelse(tile_m2 > 0, 'Reported', NA)
+  )
+```
+
+
+# training and testing ground truth 
+```{r}
+tile_tain <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_train.shp'))
+tile_test <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_test.shp'))
+names(tile_test)
+
+unique(tile_tain$sources)
+unique(tile_test$sources)
+
+tile_tain$Group <- "train"
+tile_test$Group <- "test"
+
+df_final_pt <- rbind(tile_tain,tile_test)
+
+pt <- df_final_pt %>%
+  dplyr::mutate(
+    sources = as.character(sources),
+    Source = case_when(
+      sources %in% c("SD_permits", "ND_permits", "BdSWD") ~ "Permits",
+      sources %in% c("Visual-GE") ~ "Visual-GE",
+      TRUE ~ "Literature"
+    )
+  )
+
+unique(pt$Source)
+names(pt)
+head(pt)
+
+cat("there are", nrow(pt), "samples")
+cat("there are", unique(pt$Num) %>% length(), "sampling locations")
+```
+
+```{r - map}
+levels(pt$Source)
+pt$Group <- factor(pt$Group, levels = c("train", "test"))
+pt %>%
+  # dplyr::mutate(Source = fct_rev(Source)) %>%
+  ggplot() +
+  geom_sf(data = cty2, aes(fill = Tile), color = "gray60", alpha = .3) +
+  geom_sf(data = pt, aes(shape = Group, color = Source), size = 1.5, alpha = .6) +
+  geom_sf(data = gom, color = "gray30", size = 3, fill = "NA") +
+  scale_fill_manual(values = 'gray', na.value = 'gray30') +
+  scale_shape_manual(values = c(16, 17)) +
+  scale_color_manual(values = c('#d95f02','#1b9e77','#7570b3')) +
+  theme(legend.key = element_rect(fill = NA)) +
+  theme(legend.key=element_blank())+
+  theme_bw() +
+  guides( ## enlarge the key size
+         fill  = guide_legend(override.aes = list(size = 3), order = 1),
+         color = guide_legend(override.aes = list(shape = 15, size = 3, alpha = .9), order = 0),
+         shape = guide_legend(override.aes = list(size = 3))) +
+    theme(
+    legend.position = c(.8, .14), 
+    legend.box = "horizontal", 
+    legend.spacing.x = unit(0, "mm"), 
+    legend.key.size = unit(5, 'mm'),
+    legend.background = element_rect(fill = "transparent"),
+    legend.box.margin = margin(0, 0, 0, 0)
+  ) 
+```
+
+```{r}
+getwd()
+pname <- paste0(dataout, "\\sample_map_bySource.png")
+pname
+ggsave(filename = pname, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
+
+# save as eps file 
+ggsave(filename = pname, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
+```
+
+
+# adjust to zoom in to tile points  
+```{r}
+
+pt_bounds <- st_bbox(pt)
+
+pt %>%
+  # dplyr::mutate(Source = fct_rev(Source)) %>%
+  ggplot() +
+  geom_sf(data = cty2, aes(fill = Tile), color = "gray60", alpha = .3) +
+  geom_sf(data = pt, aes(shape = Group, color = Source), size = 1.5, alpha = .5) +
+  geom_sf(data = gom, color = "gray30", size = 3, fill = "NA") +
+  scale_fill_manual(values = 'gray', na.value = 'gray30') +
+  scale_shape_manual(values = c(16, 17)) +
+  scale_color_manual(values = c('#d95f02','#1b9e77','#7570b3')) +
+  theme(legend.key = element_rect(fill = NA)) +
+  theme(legend.key=element_blank())+
+  theme_bw() +
+  guides( ## enlarge the key size
+         fill  = guide_legend(override.aes = list(size = 3), order = 1),
+         color = guide_legend(override.aes = list(shape = 15, size = 3, alpha = .9), order = 0),
+         shape = guide_legend(override.aes = list(size = 3))) +
+    theme(
+    legend.position = c(.8, .9), 
+    legend.box = "horizontal", 
+    legend.spacing.x = unit(0, "mm"), 
+    legend.key.size = unit(5, 'mm'),
+    legend.background = element_rect(fill = "transparent"),
+    legend.box.margin = margin(0, 0, 0, 0)
+  ) +
+  coord_sf(xlim = c(pt_bounds["xmin"], pt_bounds["xmax"]), ylim = c(pt_bounds["ymin"], pt_bounds["ymax"])) 
+```
+
+```{r}
+getwd()
+pname <- paste0(dataout, "\\sample_map_bySource_20240614.png")
+pname
+ggsave(filename = pname, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
+
+pname_pdf <- paste0(dataout, "\\sample_map_bySource_20240614.pdf")
+ggsave(filename = pname_pdf, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
+```
+
+
