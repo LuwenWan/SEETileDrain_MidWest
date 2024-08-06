@@ -39,8 +39,8 @@ library(mapdata)
 # working directory 
 ```{r Dirs, include=FALSE}
 ### Set work dir ----------------------------------------------------------
-dataout <- "S:\\Users\\luwen\\Tile_Mapping_States\\1_MyTile\\Midwest_Diss_20230802"
-ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20230801/"
+dataout <- "C:/wanluwen/Code/SEETileDrain_MidWest/figure"
+ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20240615/"
 ```
 
 
@@ -60,15 +60,40 @@ cty2 <- cty %>%
   )
 ```
 
+# get state boundary coordinates for HydroShare
+```{r}
+current_crs <- st_crs(gom)
+print(current_crs)
+
+# Transform to EPSG:4326 if not already in decimal degrees
+if (current_crs != 4326) {
+    gom_4326 <- st_transform(gom, 4326)
+}
+
+# Get the bounding box in decimal degrees
+bounding_box <- st_bbox(gom_4326)
+print(bounding_box)
+```
+
+
+
 
 # training and testing ground truth 
 ```{r}
-tile_tain <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_train.shp'))
-tile_test <- st_read(paste0(ground_dir,'AllTile_14states_bdry_500mfishID_test.shp'))
+tile_tain <- st_read(paste0(ground_dir,'20240615_train_tile_nontile.shp'))
+tile_test <- st_read(paste0(ground_dir,'20240615_test_tile_nontile.shp'))
 names(tile_test)
 
 unique(tile_tain$sources)
 unique(tile_test$sources)
+
+unique(tile_tain$TD)
+
+tile_tain <- tile_tain %>%
+  dplyr::filter(TD == 1)
+
+tile_test <- tile_test %>%
+  dplyr::filter(TD == 1)
 
 tile_tain$Group <- "train"
 tile_test$Group <- "test"
@@ -121,17 +146,6 @@ pt %>%
     legend.box.margin = margin(0, 0, 0, 0)
   ) 
 ```
-
-```{r}
-getwd()
-pname <- paste0(dataout, "\\sample_map_bySource.png")
-pname
-ggsave(filename = pname, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
-
-# save as eps file 
-ggsave(filename = pname, plot = last_plot(), width = 7, height = 5, units = "in", dpi = 600)
-```
-
 
 # adjust to zoom in to tile points  
 ```{r}

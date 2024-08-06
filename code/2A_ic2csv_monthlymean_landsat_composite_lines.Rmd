@@ -16,7 +16,7 @@ library(ggplot2)
 library(tidyverse)
 library(reshape) # for melt()
 require(purrr)  # for map(), reduce()
-datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/2017_Midwest_ic2csv_20230329"
+datadir <- "C:/wanluwen/Code/SEETileDrain_MidWest/2017_Midwest_ic2csv_20230329"
 setwd(datadir)
 files <- list.files(pattern = "\\.csv$")
 files

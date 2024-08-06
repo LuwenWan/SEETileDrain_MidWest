@@ -21,7 +21,7 @@ library(ggpmisc) # stat_poly_eq
 library(ggrepel)
 library(grid)
 library(Metrics)  # for rmse 
-library(rgdal)
+# library(rgdal)
 library(sf)
 library(lintr)
 library(readr)
@@ -29,8 +29,8 @@ library(ggplot2)
 library(ggpmisc)
 
 today <- format(Sys.time(), "%Y%m%d"); print(today)
-setwd("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802")
-tileDir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
+setwd("C:/wanluwen/Code/SEETileDrain_MidWest/Midwest_Diss_20230802")
+tileDir <- ":/wanluwen/Code/SEETileDrain_MidWest/Midwest_Diss_20230802/"
 
 ```
 
@@ -39,7 +39,7 @@ tileDir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
 # bring counties that I defined in my study region - 812 counties 
 my_county <- st_read("S:/Users/luwen/Tile_Mapping_States/14statesGIS/States14_county_tile_ag_aland_percent_2017_counties_select.shp")
 names(my_county)
-quantile(my_county$alnd_pr,na.rm = T)
+sum(my_county$tile_m2, na.rm = TRUE)
 
 state <- st_read("S:/Users/luwen/Tile_Mapping_States/14statesGIS/Tile_Bdry_NoGL_14states.shp")
 names(state)
@@ -57,12 +57,15 @@ head(state)
 
 ```{r}
 # read the area from classified map -------------
-data <- read_csv(paste0(tileDir,"Midwest_class_area_by_county_notnull_20230804.csv"),show_col_types = FALSE)
+data <- read_csv(paste0(tileDir,"Midwest_class_area_by_county_notnull_202406.csv"),show_col_types = FALSE)
 names(data)
+
 data_classified <- data[,c("0","1","GEOID" )]
 colnames(data_classified)[which(names(data_classified) == "0")] <- "classified_NonTile"
 colnames(data_classified)[which(names(data_classified) == "1")] <- "classified_Tile"
 
+# area 
+sum(data_classified$classified_Tile)
 # only left the counties in my study area 
 data_classified_final <- data_classified[data_classified$GEOID %in% my_county$GEOID,]
 
@@ -82,6 +85,7 @@ data_classified_final$classified_Tile_m2 <- data_classified_final$classified_Til
 
 names(data_classified_final)
 data_classified_final <- data_classified_final[,c("GEOID","classified_Tile_m2","classified_NonTile_m2")]
+sum(data_classified_final$classified_Tile_m2)
 ```
 
 
@@ -102,11 +106,7 @@ data_classified_final <- data_classified_final[,c("GEOID","classified_Tile_m2","
 
 ```
 
-
-
-
 ```{r}
-
 # my_county_data <- as.data.frame(my_county)
 # names(my_county_data)
 my_county_tile <- my_county[,c("GEOID","ALAND","tile_m2")]
@@ -116,7 +116,6 @@ nass_data_NA <- my_county_tile %>%
 
 ```
 
-
 ```{r}
 # merge the classified data with NASS data
 merge <- merge(my_county_tile,data_classified_final,all.x = T)
@@ -124,7 +123,7 @@ class(merge)
 names(merge)
 
 merge_NA_classified <- merge %>%
-  filter(is.na(classified_Tile_m2))  # 216 
+  filter(is.na(classified_Tile_m2))  # 210
 
 merge_NA_nass <- merge %>%
   filter(is.na(tile_nass_m2))  # 30
@@ -132,7 +131,7 @@ merge_NA_nass <- merge %>%
 
 merge_NA_classified <- merge %>%
   filter(is.na(classified_Tile_m2)) %>%
-  filter(!is.na(tile_nass_m2))  # 188 
+  filter(!is.na(tile_nass_m2))  # 182
 
 merge_NA_NASS <- merge %>%
   filter(is.na(tile_nass_m2)) %>%
@@ -171,8 +170,6 @@ hist(merge_res_data$residual)
 hist(merge_res_data$residual, nclass = 1000, xlim = c(-100, 100))
 quantile(merge_res_data$residual)
 # quantile(merge_res_data$residual, probs = c(0,0.2,0.4,0.6,0.8,1))
-
-
 # class(merge_res_data)
 # class(states)
 # ggplot(merge_res_data) +
@@ -383,7 +380,7 @@ head(merge_res_data_df)
 <!-- ``` -->
 
 ```{r}
-library(maptools)
+
 # Put equation & R2 coef to the top left corner
 merge_res_data$tile_nass_km2 <- merge_res_data$tile_nass_m2/1000000
 merge_res_data$classified_Tile_km2 <- merge_res_data$classified_Tile_m2/1000000
@@ -470,7 +467,7 @@ fname <- paste0(tileDir,'Fig6_County_level_accuracy_SpatialResiduals.png'); fnam
 ggsave(filename = fname,
        plot = last_plot(), dpi = 100, width = 5, units = 'in')
 
-fname <- paste0(tileDir,today, '_','Fig6_County_level_accuracy_SpatialResiduals.pdf'); fname
+fname <- paste0(tileDir, 'Fig6_County_level_accuracy_SpatialResiduals.pdf'); fname
 ggsave(filename = fname,
        plot = last_plot(), dpi = 600, width = 5, units = 'in') # ,
 ```

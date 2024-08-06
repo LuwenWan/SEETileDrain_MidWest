@@ -25,7 +25,8 @@ library(ggh4x)
 #  # https://www.r-bloggers.com/2017/06/add-p-values-and-significance-levels-to-ggplots/
 
 today <- format(Sys.time(), "%Y%m%d"); print(today)
-datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
+dataIndir <- "C:/wanluwen/Code/SEETileDrain_MidWest/Midwest_Diss_20230802/"
+datadir <- "C:/wanluwen/Code/SEETileDrain_MidWest/figure/"
 set.seed(1234)
 
 knitr::opts_knit$set(root.dir = datadir)
@@ -48,10 +49,14 @@ td_labels <- c("Tile", 'Non-tile')
 tdcolors <- c("royalblue1", "skyblue1")
 
 # for importance metrix 
-td_levels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
-td_labels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
-td_colors <- c("#1f78b4","#a6cee3","#8dd3c7","#b2df8a","#fb9a99","#ff7f00",'#fdbf6f',"#cab2d6","#807dba","#33a02c","#ffff99")  ## "#8dd3c7",
-
+td_levels <- c("Climate","Landscape characteristics","Surface reflectance","LST","SMAP") 
+td_labels <- c("Climate","Landscape characteristics","Surface reflectance","LST","SMAP") 
+td_colors <- c("#1f78b4","#fb9a99","#33a02c","#a6d854","#a6cee3") 
+gear.cols <- c("Climate" = "#1f78b4",
+               "Landscape characteristics" = "#fb9a99",
+               "Surface reflectance" = "#33a02c",
+               "LST" = "#a6d854",
+               "SMAP" = "#a6cee3") 
 ```
 
 # 2. TOP 20 variables 
@@ -111,7 +116,7 @@ data_select3 <- data_select2 %>%
 ```
 
 ```{r}
-MDA <- read_csv(paste0(datadir,"/20240429_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
+MDA <- read_csv(paste0(dataIndir,"/20240728_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
 names(MDA)
 
 top20 <- dplyr::slice(MDA %>% 
@@ -132,11 +137,14 @@ top20$Bands
 data_select4 <- data_select3[, (colnames(data_select3) %in% c(top20$Bands,"TD"))]
 names(data_select4)
 
+# convert Canal_ditch_dist to km 
+data_select4$Canal_ditch_dist <- data_select4$Canal_ditch_dist/1000
+
 ## convert to long format
-gathercols <- c("AET_grow","NightLST_max_summ","Aridity_spr","SMP_median_summ","SUSM_median_spr","DayLST_range_grow",
-              "Soil_drain_class","Precip_grow","Slope_mean","Clay_mean_5cm","SUSM_range_spr","Canal_ditch_dist",
-              "DayLST_median_grow","HLR","Aridity_preGrow_3yr","DayLST_range_spr","NightLST_max_spr","Ksat_mean_5cm",
-               "DayLST_median_spr","DayLST_range_summ")
+gathercols <- c("Canal_ditch_dist","HLR","SMP_median_summ","SUSM_median_spr","SUSM_range_spr",
+                "AET_grow","Aridity_preGrow_3yr","Aridity_spr","Clay_mean_5cm","DayLST_median_grow",
+                "DayLST_median_spr","DayLST_range_grow","DayLST_range_spr","DayLST_range_summ",
+                "Ksat_mean_5cm","NightLST_max_spr","NightLST_max_summ","Precip_grow","Slope_mean","Soil_drain_class")
 
 data_select2_long <- gather(data_select4, Bands, bands,all_of(gathercols), factor_key=TRUE)
 unique(data_select2_long$Bands)
@@ -216,10 +224,10 @@ df_top_group %>%
 ```
 
 ```{r}
-fname <- paste0(datadir,today, '_','Fig4_Variable_Difference_20Vars.png'); fname
+fname <- paste0(datadir,'4A_Variable_Difference_20Vars.png'); fname
 ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
 
-fname <- paste0(datadir,'Fig4_Variable_Difference_20Vars.pdf'); fname
+fname <- paste0(datadir,'4A_Variable_Difference_20Vars.pdf'); fname
 ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
 
 ```
@@ -308,10 +316,10 @@ df_top_group %>%
 
 
 ```{r}
-fname <- paste0(datadir,today, '_','FigA4_Variable_Difference_11Vars.png'); fname
+fname <- paste0(datadir,'5A_Variable_Difference_11Vars.png'); fname
 ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
 
-fname <- paste0(datadir, 'FigA4_Variable_Difference_11Vars.pdf'); fname
+fname <- paste0(datadir, '5A_Variable_Difference_11Vars.pdf'); fname
 ggsave(filename = fname, plot = last_plot(), dpi = 600, width = 7, height = 7) #height = 5
 ```
 
@@ -416,7 +424,6 @@ hist(data_select2_tiled$soilDrainClass)
 unique(data_select2_tiled$soilDrainClass)
 
 
-
 names(data_select2_nontiled)
 data_select2_nontiled2 <- data_select2_nontiled %>%
   filter(soilDrainClass == 2)
@@ -434,7 +441,7 @@ nrow(data_select2_tiled4)/nrow(data_select2_tiled)
 data_select2_tiled2 <- data_select2_tiled %>%
   filter(soilDrainClass == 2)
 nrow(data_select2_tiled2)/nrow(data_select2_tiled)
-# it seems not true that SMP_median_summ in tile area is higher, so we compare them by soil drainage class
+# it seems not as expected that SMP_median_summ in tile area is higher, so we compare them by soil drainage class
 median(data_select2_tiled2$SMP_median_summ) # 0.3601899
 median(data_select2_nontiled2$SMP_median_summ) #  0.4608928
 

@@ -72,13 +72,13 @@ library(tidymodels)
 library(randomForestExplainer)
 
 today <- format(Sys.time(), "%Y%m%d"); print(today)
-datadir <- "S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/"
-# datadir <- "C:/wanluwen/Code/SEETileDrain_MidWest/figure"
+dataIndir <- "C:/wanluwen/Code/SEETileDrain_MidWest/Midwest_Diss_20230802/"
+datadir <- "C:/wanluwen/Code/SEETileDrain_MidWest/figure/"
 truth_datadir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth"
-ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20240615/"
+ground_dir <- "S:/Users/luwen/Tile_Mapping_States/GroundTruth/MyTruth/2017update20230801/"
 
 # load pre-saved objects: phi-df and shapley_MDA_Gini 
-load(paste0(datadir, "mydata.RData")) 
+load(paste0(dataIndir, "mydata.RData")) 
 
 set.seed(1234)
 ```
@@ -86,20 +86,15 @@ set.seed(1234)
 ## 1.1 universal - setting 
 ```{r}
 # for importance metrix 
-td_levels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
-td_labels <- c("TerraClimate","GridMET","SMAP","MODIS","NED","gSSURGO","Polaris","NHD","HLR","Landsat","CDL") ## "Landsat",
-td_colors <- c("#1f78b4","#a6cee3","#8dd3c7","#b2df8a","#fb9a99","#ff7f00",'#fdbf6f',"#cab2d6","#807dba","#33a02c","#ffff99")  ## "#8dd3c7",
-gear.cols <- c("TerraClimate" = "#1f78b4",
-               "GridMET" = "#a6cee3",
-               "SMAP" = "#8dd3c7",
-               "MODIS" = "#b2df8a",
-               "NED" = "#fb9a99",
-               "gSSURGO" = "#ff7f00",
-               "Polaris" = "#fdbf6f",
-               "NHD" = "#cab2d6",
-               "HLR" = "#807dba",
-               "Landsat" = "#33a02c",
-               "CDL" = "#ffff99") 
+td_levels <- c("Climate","Landscape characteristics","Surface reflectance","LST","SMAP") 
+td_labels <- c("Climate","Landscape characteristics","Surface reflectance","LST","SMAP") 
+td_colors <- c("#1f78b4","#fb9a99","#33a02c","#a6d854","#a6cee3") 
+gear.cols <- c("Climate" = "#1f78b4",
+               "Landscape characteristics" = "#fb9a99",
+               "Surface reflectance" = "#33a02c",
+               "LST" = "#a6d854",
+               "SMAP" = "#a6cee3") 
+
 gear.cols.df <- data.frame(td_labels = td_labels, td_colors = td_colors)
 
 font_size = 8
@@ -242,15 +237,16 @@ nrow(nontile_tain) + nrow(nontile_test) + nrow(tile_tain) + nrow(tile_test) # 64
 
 nrow(nontile_tain) + nrow(tile_tain) # 51716
 nrow(nontile_test) + nrow(tile_test) # 12392 
+nrow(nontile_tain) + nrow(tile_tain) + nrow(nontile_test) + nrow(tile_test) 
 
 # these data was collected based on different train and test 
-tile_train2 <- read_csv(paste0(datadir,"Midwest_tile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
-nontile_train2 <- read_csv(paste0(datadir,"Midwest_nontile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
-test2 <- read_csv(paste0(datadir,"/Midwest_test_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+tile_train2 <- read_csv(paste0(dataIndir,"Midwest_tile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+nontile_train2 <- read_csv(paste0(dataIndir,"Midwest_nontile_train_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
+test2 <- read_csv(paste0(dataIndir,"/Midwest_test_sampleRe_scale_allVars_30_noSAR_20230802.csv"),show_col_types = FALSE)
 nrow(tile_train2) + nrow(nontile_train2) + nrow(test2) # 60938
 nrow(tile_train2) + nrow(nontile_train2) # 48982
 nrow(test2) # 11956
-# 64796 - 60938 = 3858, so we missed 3858/64796=5% points, some holes in input variables
+# 64108 - 60938 = 3170, so we missed 3170/64108=5% points, some holes in input variables
 
 # get all variables for train and test data 
 names(tile_train2)
@@ -331,16 +327,22 @@ names(train_df)
 # numbers for publication 
 train_df_tile <- train_df %>%
   filter (TD == "Tile") # 26442
+nrow(train_df_tile)
 
 train_df_nontile <- train_df %>%
   filter (TD == "Non-tile") # 22540
+nrow(train_df_nontile)
 
 test_df_tile <- test_df %>%
   filter (TD == "Tile") # 2281
+nrow(test_df_tile)
 
 test_df_nontile <- test_df %>%
   filter (TD == "Non-tile") # 9675
+nrow(test_df_nontile)
 
+nrow(train_df_tile) + nrow(test_df_tile)
+nrow(train_df_nontile) + nrow(test_df_nontile)
 # we cant continue use these points as training or test , so merge first 
 traindata <- train_df
 testdata <- test_df
@@ -540,12 +542,16 @@ names(traindata_select)
 
 names(traindata_select)
 
-finallist <- c("CanalDitchD", "HLR","NDVI_Grow_max","NDWI_Spring_max","NDWI_Summer_max",
-               "SMP_median_summ","SUSM_median_spr","SUSM_range_spr","Tr_SWIR1_Grow_max","Tr_SWIR2_Spring_max","Tr_SWIR2_Summer_max",
-               "aet_grow_terra","aridity_preGrow_3yr","aridity_spr","clay_mean_0_5","cropland","dayLST_median_grow",
-               "dayLST_median_spr","dayLST_median_summ","dayLST_range_grow",
-               "dayLST_range_spr","dayLST_range_summ","diffLST_median_grow","diffLST_median_spr","ksat_mean_0_5",
-               "nightLST_max_spr","nightLST_max_summ","paw_mean_0_5","pr_grow","slope_mean","soilDrainClass")
+# order in Table 2
+finallist <- c("NDVI_Grow_max", "NDWI_Spring_max","NDWI_Summer_max","Tr_SWIR1_Grow_max","Tr_SWIR2_Spring_max","Tr_SWIR2_Summer_max",
+"aet_grow_terra","pr_grow","aridity_spr","aridity_preGrow_3yr",
+"dayLST_median_spr", "dayLST_median_grow","dayLST_range_spr","dayLST_median_summ","dayLST_range_grow","dayLST_range_summ",
+ "diffLST_median_grow","diffLST_median_spr",
+"nightLST_max_summ", "nightLST_max_spr",
+ "SMP_median_summ","SUSM_median_spr","SUSM_range_spr",
+ "clay_mean_0_5","ksat_mean_0_5",  "paw_mean_0_5",
+"slope_mean","soilDrainClass","CanalDitchD", "HLR", "cropland")
+
 
 # keep variables needed for train and test data
 traindata_final <- traindata_select[, (colnames(traindata_select)) %in% c(finallist,"TD")]
@@ -806,62 +812,31 @@ df_select <- df[,c("Bands","MeanDecreaseAccuracy","MeanDecreaseGini")]
 
 # add another column to bands type, like climate, soil, satellite
 # df$type[df$Bands == "cropland"] <- "land" 
+
 df1 <- df_select %>%
   dplyr::mutate(
-    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Landsat', ''),
-    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'MODIS', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Surface reflectance', ''),
+    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'LST', group),
     group = ifelse(str_detect(string = Bands, pattern = 'SMP.|SSM.|SUSM.'), 'SMAP', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'AET.'), 'TerraClimate', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Aridity.|Precip_'), 'GridMET', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class'), 'gSSURGO', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Slope_mean'), 'NED', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'HLR'), 'HLR', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Canal'), 'NHD', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Paw_|paw_|Clay_|Ksat_'), 'Polaris',group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Cropland'), 'CDL',group)) 
+    group = ifelse(str_detect(string = Bands, pattern = 'AET.|Aridity.|Precip_'), 'Climate', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class|Slope_mean|HLR|Canal|Paw_|paw_|Clay_|Ksat_|Cropland'), 'Landscape characteristics', group))
   # dplyr::filter(Bands != 'Cropland')
 # check whether the variables was assigned to a correct group 
 # group = ifelse(str_detect(string = Bands, pattern = 'VH|VV'), 'SAR', group),
 
-fname <- paste0(datadir,today, '_','RF_R_importance_allPoints_selectVars.csv'); fname
+fname <- paste0(dataIndir,today, '_','RF_R_importance_allPoints_selectVars.csv'); fname
 write_csv(df1, file = fname)
 ```
 
-### 3.6.1 MeanDecreaseGini
-```{r}
 
+### 3.6.1 MeanDecreaseAccuracy
+```{r }
 # 20240429_RF_R_importance_allPoints_selectVars.csv
-df1 <- read_csv(paste0(datadir,"20240429", '_','RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
+df1 <- read_csv(paste0(datadir,"20240728", '_','RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
 unique(df1$group)
 df1$group <- factor(x = df1$group, levels = td_levels, labels = td_labels)  
 levels(df1$group)
 
-Gini <- df1 %>%
-  mutate(name = fct_reorder(Bands,MeanDecreaseGini)) %>%  ## set the levels in order we want
-  ggplot(aes(x = name, y = MeanDecreaseGini, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
-  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
-  coord_flip() +
-  ggtitle("Mean Decrease Gini") +
-  labs(y = "Mean Decrease Gini", x = "Bands") +
-  # labs(y = "Importance", x = "Variable") +
-  # scale_fill_manual(values = c("#6baed6",'#fdb462',"#74c476","#006d2c","#00C5FB")) +  #"#999999"
-  # scale_fill_manual(values = c("#74C476","#00C5FB",'#FFDA83',"#DFD572","#ACCE6F")) +  
-  scale_fill_manual(values = td_colors) +  
-  theme_bw(base_size = font_size)+
-  #geom_text(aes(y = MeanDecreaseGini + 30, label = rank), size = 5, color = 'black') +
-  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth = 1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
-        plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
-        legend.position = c(0.75, 0.15),legend.title = element_blank(),
-        legend.text = element_text(color = "black", size = font_size),
-        axis.title = element_blank(),
-        axis.text = element_text(color = "black", size = font_size),
-        legend.background = element_rect(color = "black",linewidth = 0.5))   #  axis.title.x = element_blank()
-Gini
-```
-
-
-### 3.6.2 MeanDecreaseAccuracy
-```{r }
 # How much the model accuracy decreases if we drop that variable.
 # MDA gives a rough estimate of the loss in prediction performance when that particular variable is omitted from the training set. Caveat: if two variables are somewhat redundant, then omitting one of them may not lead to massive gains in prediction performance, but would make the second variable more important.
 
@@ -883,13 +858,40 @@ accuDecrease <- df1 %>%
   #       axis.title = element_blank())   #  axis.title.x = element_blank()
   theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
         plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
-        legend.position = c(0.75, 0.15),legend.title = element_blank(),
+        legend.position = c(0.6, 0.07),legend.title = element_blank(),
         legend.text = element_text(color = "black", size = font_size),
         axis.title = element_blank(),
         axis.text = element_text(color = "black", size = font_size),
         legend.background = element_rect(color = "black",linewidth = 0.5))   #  axis.title.x = element_blank()
 accuDecrease
 ```
+
+
+### 3.6.2 MeanDecreaseGini
+```{r}
+Gini <- df1 %>%
+  mutate(name = fct_reorder(Bands,MeanDecreaseGini)) %>%  ## set the levels in order we want
+  ggplot(aes(x = name, y = MeanDecreaseGini, fill = factor(group))) +  # col = c("#1f78b4","#fdc086","#b2df8a","#fc8d62")
+  geom_bar(stat="identity", alpha= 1, width=.4) +  # fill="#f68060",
+  coord_flip() +
+  ggtitle("Mean Decrease Gini") +
+  labs(y = "Mean Decrease Gini", x = "Bands") +
+  # labs(y = "Importance", x = "Variable") +
+  # scale_fill_manual(values = c("#6baed6",'#fdb462',"#74c476","#006d2c","#00C5FB")) +  #"#999999"
+  # scale_fill_manual(values = c("#74C476","#00C5FB",'#FFDA83',"#DFD572","#ACCE6F")) +  
+  scale_fill_manual(values = td_colors) +  
+  theme_bw(base_size = font_size)+
+  #geom_text(aes(y = MeanDecreaseGini + 30, label = rank), size = 5, color = 'black') +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth = 1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
+        legend.position = c(0.6, 0.07),legend.title = element_blank(),
+        legend.text = element_text(color = "black", size = font_size),
+        axis.title = element_blank(),
+        axis.text = element_text(color = "black", size = font_size),
+        legend.background = element_rect(color = "black",linewidth = 0.5))   #  axis.title.x = element_blank()
+Gini
+```
+
 
 
 ### 3.6.3 merge Gini and Accuracy Decrease figure  
@@ -1135,6 +1137,8 @@ for (variable in variables) {
 }
 
 head(df)
+unique(df$var)
+unique(df$varrs)
 
 # df1 <- df %>%
 #   mutate(test = var == varrs)
@@ -1145,8 +1149,8 @@ head(df)
 
 # make it as the MDA order
 # make it by the order of MDA 
-MDA <- read_csv(paste0(datadir,"20240429_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
-MDA <- read_csv("C:/Users/luven/Desktop/Midwest_Diss_20230802/20240429_RF_R_importance_allPoints_selectVars.csv",show_col_types = FALSE)
+MDA <- read_csv(paste0(datadir,"20240728_RF_R_importance_allPoints_selectVars.csv"),show_col_types = FALSE)
+# MDA <- read_csv("C:/Users/luven/Desktop/Midwest_Diss_20230802/20240429_RF_R_importance_allPoints_selectVars.csv",show_col_types = FALSE)
 
 MDAorder <- (MDA[order(MDA$MeanDecreaseAccuracy, decreasing = TRUE),])$Bands
 MDAorder
@@ -1166,6 +1170,7 @@ tail11var <- c("DayLST_median_summ","DiffLST_median_spr","DiffLST_median_grow","
 ```{r}
 df_top <- df[(df$varrs %in% top20Var),]
 unique(df_top$varrs)
+
 # add group name 
 names(df_top)
 names(MDA)
@@ -1366,7 +1371,7 @@ for (i in random_row) {
 # write_csv(phi_df, paste0(datadir,"phi_df_1percent.csv"))
 
 # phi_df <- read_csv(paste0(datadir,"phi_df_1percent.csv"),show_col_types = FALSE)
-phi_df <- read_csv("C:/Users/luven/Desktop/Midwest_Diss_20230802/phi_df_1percent.csv",show_col_types = FALSE)
+phi_df <- read_csv(paste0(dataIndir,'phi_df_1percent.csv'),show_col_types = FALSE)
 
 phi_df_mean <- phi_df %>%
   group_by(feature) %>%
@@ -1395,22 +1400,15 @@ names(phi_df_mean)
 phi_df_mean$Bands <- phi_df_mean$feature
 phi_df_mean_group <- phi_df_mean %>%
   dplyr::mutate(
-    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Landsat', ''),
-    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'MODIS', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'NDVI.|NDWI.|Tr_swir.'), 'Surface reflectance', ''),
+    group = ifelse(str_detect(string = Bands, pattern = 'DayLST_|DiffLST_|NightLST_'), 'LST', group),
     group = ifelse(str_detect(string = Bands, pattern = 'SMP.|SSM.|SUSM.'), 'SMAP', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'AET.'), 'TerraClimate', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Aridity.|Precip_'), 'GridMET', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class'), 'gSSURGO', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Slope_mean'), 'NED', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'HLR'), 'HLR', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Canal'), 'NHD', group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Paw_|paw_|Clay_|Ksat_'), 'Polaris',group),
-    group = ifelse(str_detect(string = Bands, pattern = 'Cropland'), 'CDL',group)) 
+    group = ifelse(str_detect(string = Bands, pattern = 'AET.|Aridity.|Precip_'), 'Climate', group),
+    group = ifelse(str_detect(string = Bands, pattern = 'Soil_drain_class|Slope_mean|HLR|Canal|Paw_|paw_|Clay_|Ksat_|Cropland'), 'Landscape characteristics', group))
+
   # dplyr::filter(Bands != 'Cropland')
 # check whether the variables was assigned to a correct group 
 # group = ifelse(str_detect(string = Bands, pattern = 'VH|VV'), 'SAR', group),
-
-
 
 shapleyPlot <- phi_df_mean_group %>%
   dplyr::mutate(name = as.character(Bands)) %>%
@@ -1426,12 +1424,12 @@ shapleyPlot <- phi_df_mean_group %>%
   theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
         plot.title = element_blank(),
         # plot.title = element_text(hjust = 0.5,color = "black", size = title_size),
-        legend.position = c(0.75, 0.225),legend.title = element_blank(),
+        legend.position = c(0.6, 0.1),legend.title = element_blank(),
         legend.text = element_text(color = "black", size = font_size),
         axis.title = element_blank(),
         axis.text = element_text(color = "black", size = font_size),
         legend.background = element_rect(color = "black",linewidth = 0.5)) +
-   annotate("text", label = "(a)", x = 1, y = 0.01, hjust = 0, vjust = 0, size = 4)
+   annotate("text", label = "(a)", x = 0.9, y = 0.004, hjust = 0, vjust = 0, size = 4)
 
 shapleyPlot
 ```
@@ -1448,7 +1446,7 @@ phi_df_mean1 <- phi_df_mean  %>%
 phi_df_mean1$phi_score <- c(nrow(phi_df_mean1):2,1)
 
 ## bring the Gini MDA, assigne score as well 
-impor <- read_csv(paste0(datadir,'20240429_RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
+impor <- read_csv(paste0(dataIndir,'20240728_RF_R_importance_allPoints_selectVars.csv'),show_col_types = FALSE)
 names(impor)
 
 impor_MDA <- impor[,c("Bands","MeanDecreaseAccuracy","group")]
@@ -1518,15 +1516,17 @@ ScorePlot <- shapley_MDA_Gini %>%
   # labs(y = "Importance", x = "Variable") +
   scale_fill_manual(values = gear.cols) +  
   theme_bw(base_size = font_size)+
-  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  # panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1.5),  
         plot.title = element_blank(),
-        legend.position = c(0.75, 0.225),legend.title = element_blank(),
-        legend.text = element_text(color = "black", size = font_size),
         axis.title = element_blank(),
         axis.text = element_text(color = "black", size = font_size),
-        legend.background = element_rect(color = "black",linewidth = 0.5)) +
-  annotate("text", label = "(b)", x = 1, y = 12.5, hjust = 0, vjust = 0, size = 4)
+        legend.position="none"
+        ) +
+  annotate("text", label = "(b)", x = 0.9, y = 10, hjust = 0, vjust = 0, size = 4)
 
+# legend.position = c(0.6, 0.1),legend.title = element_blank(),
+# legend.text = element_text(color = "black", size = font_size)
+# legend.background = element_rect(color = "black",linewidth = 0.5)
 
 ScorePlot
 shapleyPlot
@@ -1596,9 +1596,10 @@ cf <- confusionMatrix(data = p2, as.factor(testdata_select$TD), mode = "everythi
 cf
 #  confusionMatrix(data = p2, as.factor(testdata$TD))
 ```
+
 # save object 
 ```{r}
 save(phi_df, shapley_MDA_Gini, impt_frame, model, rf_model, file = paste0(datadir, "mydata.RData")) # model is the final model not initial model 
-# load(paste0(datadir, "mydata.RData"))
+load("S:/Users/luwen/Tile_Mapping_States/1_MyTile/Midwest_Diss_20230802/mydata.RData")
 ```
 

@@ -1,3 +1,5 @@
 # SEETileDrain_MidWest
 Scripts for selecting variables, implementing the random forest model and visualizing the figures. 
-Wan, L., Kendall, A. D., Rapp, J., & Hyndman, D.W. Mapping Agricultural Tile Drainage in the US Midwest Using Explainable Random Forest Machine Learning and Satellite Imagery. [under  review]
+
+Preferred citation:
+L. Wan, A.D. Kendall, J. Rapp,  D.W. Hyndman. 2024. Mapping agricultural tile drainage in the US Midwest using explainable random forest machine learning and satellite imagery, Science of the Total Environment. https://doi.org/10.1016/j.scitotenv.2024.175283
